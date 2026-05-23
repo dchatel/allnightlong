@@ -1,0 +1,93 @@
+name: Release
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            rust-target: x86_64-pc-windows-msvc
+            ext: .exe
+          - platform: macos-latest
+            rust-target: aarch64-apple-darwin # macos-latest utilise les puces M1/Apple Silicon
+            ext: ""
+          - platform: ubuntu-22.04
+            rust-target: x86_64-unknown-linux-gnu
+            ext: ""
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      # 1. PRÉPARATION DE L'ENVIRONNEMENT LINUX (Pour Tauri)
+      - name: Installer les dépendances Linux (Ubuntu seulement)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      # 2. PRÉPARATION DU BACKEND PYTHON AVEC `uv`
+      - name: Installer uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Compiler le Backend Python (PyInstaller)
+        run: |
+          cd backend
+          uv add pyinstaller
+          # On compile le script en un seul fichier autonome
+          uv run pyinstaller --onefile --name allnightlong-backend main.py
+        shell: bash
+
+      # 3. PRÉPARATION DU SIDECAR POUR TAURI
+      - name: Placer l'exécutable Python pour Tauri
+        run: |
+          mkdir -p frontend/src-tauri/bin
+          # Tauri a besoin d'un suffixe strict (ex: allnightlong-backend-x86_64-pc-windows-msvc.exe)
+          cp backend/dist/allnightlong-backend${{ matrix.ext }} frontend/src-tauri/bin/allnightlong-backend-${{ matrix.rust-target }}${ { matrix.ext } }
+        shell: bash
+
+      # 4. PRÉPARATION DU FRONTEND
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Installer les dépendances JS
+        run: |
+          cd frontend
+          npm install
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-target }}
+
+      # 5. BUILD ET RELEASE TAURI
+      - name: Build de l'app Tauri
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: v__VERSION__
+          releaseName: 'AllNightLong v__VERSION__'
+          releaseBody: 'Mise à jour de AllNightLong. Voir les commits.'
+          releaseDraft: false
+          prerelease: false
+          projectPath: frontend

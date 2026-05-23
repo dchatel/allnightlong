@@ -3,28 +3,77 @@
 	import favicon from '$lib/assets/favicon.svg';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { onMount } from 'svelte';
+	import { check } from '@tauri-apps/plugin-updater';
+	import { ask, message } from '@tauri-apps/plugin-dialog';
+	import { relaunch } from '@tauri-apps/plugin-process';
 	import TitleBar from '$lib/components/TitleBar.svelte';
+	import { Command } from '@tauri-apps/plugin-shell';
 
 	let { children } = $props();
 
   	const appWindow = getCurrentWindow();
 	let isMaximized = $state(false);
 
+	async function checkForUpdates(manual: boolean) {
+		try {
+			const update = await check();
+			if (update?.available) {
+				const confirmed = await ask(
+					`Une version ${update.version} est disponible (publiée le ${update.date}). Voulez-vous l'installer ?`,
+					{ title: 'Mise à jour disponible', kind: 'info' }
+				);
+
+				if (confirmed) {
+					await update.downloadAndInstall();
+					await relaunch();
+				}
+			} else if (manual) {
+				await message("Votre version est déjà à jour.", { title: "Pas de mise à jour", kind: "info" });
+			}
+		} catch (error) {
+			console.error("Erreur updater:", error);
+		}
+	}
+
 	onMount(() => {
 		let unlisten: () => void;
+		let pythonChild: any;
 
-		async function setupListener() {
-			isMaximized = await appWindow.isMaximized();
+		async function initializeApp() {
+			// Démarrer le backend Python
+			try {
+				const command = Command.sidecar("bin/allnightlong-backend");
+				pythonChild = await command.spawn();
+				console.log("Backend démarré avec PID:", pythonChild.pid);
+			} catch (error) {
+				console.error("Impossible de démarrer le backend:", error);
+			}
 
-			unlisten = await appWindow.onResized(async () => {
+			// Gérer le resize de la fenêtre
+			try {
 				isMaximized = await appWindow.isMaximized();
-			});
+				unlisten = await appWindow.onResized(async () => {
+					isMaximized = await appWindow.isMaximized();
+				});
+			} catch (error) {
+				console.error("Erreur lors de l'écoute du redimensionnement:", error);
+			}
+
+			// Vérifier les mises à jour
+			try {
+				await checkForUpdates(false);
+			} catch (error) {
+				console.error("Erreur lors de la vérification des mises à jour:", error);
+			}
 		}
 
-		setupListener();
+		initializeApp();
 
 		return () => {
 			if (unlisten) unlisten();
+			if (pythonChild) {
+				pythonChild.kill();
+			}
 		}
 	});
 </script>

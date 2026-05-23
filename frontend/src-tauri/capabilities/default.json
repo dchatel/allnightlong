@@ -18,6 +18,14 @@
     "process:allow-restart",
     "updater:allow-check",
     "updater:allow-install",
-    "log:default"
+    "log:default",
+    "shell:default",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [{
+        "name": "bin/allnightlong-backend",
+        "sidecar": true
+      }]
+    }
   ]
 }
