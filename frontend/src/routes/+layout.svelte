@@ -1,6 +1,7 @@
 <script lang="ts">
 	import './layout.css';
 	import favicon from '$lib/assets/favicon.svg';
+	import { dev } from '$app/environment';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { onMount } from 'svelte';
 	import { check } from '@tauri-apps/plugin-updater';
@@ -41,12 +42,16 @@
 
 		async function initializeApp() {
 			// Démarrer le backend Python
-			try {
-				const command = Command.sidecar("bin/allnightlong-backend");
-				pythonChild = await command.spawn();
-				console.log("Backend démarré avec PID:", pythonChild.pid);
-			} catch (error) {
-				console.error("Impossible de démarrer le backend:", error);
+			if(!dev) {
+				try {
+					const command = Command.sidecar("bin/allnightlong-backend");
+					pythonChild = await command.spawn();
+					console.log("Backend démarré avec PID:", pythonChild.pid);
+				} catch (error) {
+					console.error("Impossible de démarrer le backend:", error);
+				}
+			} else {
+				console.log("Mode développement : le backend doit être démarré manuellement.");
 			}
 
 			// Gérer le resize de la fenêtre
