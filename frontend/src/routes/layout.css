@@ -6,3 +6,73 @@
 @import '@skeletonlabs/skeleton-svelte';
 
 @import '@skeletonlabs/skeleton/themes/crimson';
+
+/* Styles globaux pour notre formulaire */
+.form-input {
+    width: 100%;
+    background-color: #202024;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: 0.82rem;
+    color: #e2e8f0;
+    transition: border-color 0.15s;
+}
+
+.form-input:focus {
+    outline: none;
+    border-color: #6366f1;
+}
+
+.form-input:disabled {
+    background-color: transparent;
+    border-color: transparent;
+    padding-left: 0;
+    color: #fff;
+    cursor: default;
+}
+
+/* Boutons */
+.btn-primary {
+    background-color: #6366f1;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    font-size: 0.75rem;
+    font-weight: bold;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.btn-primary:hover { background-color: #4f46e5; }
+
+.btn-secondary {
+    background-color: #202024;
+    color: #e2e8f0;
+    border: 1px solid #444;
+    padding: 6px 12px;
+    font-size: 0.75rem;
+    font-weight: bold;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.btn-secondary:hover { background-color: #2a2a2d; }
+
+.btn-danger {
+    background-color: #e81123;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    font-size: 0.75rem;
+    font-weight: bold;
+    border-radius: 4px;
+    cursor: pointer;
+}
+.btn-danger:hover { background-color: #b10a17; }
+
+/* Sélection active barre latérale */
+.active-item {
+    background-color: #202024;
+    border-left: 3px solid #6366f1;
+}
