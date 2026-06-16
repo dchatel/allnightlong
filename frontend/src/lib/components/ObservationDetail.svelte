@@ -14,7 +14,7 @@
 			<h2 class="text-sm font-bold uppercase tracking-widest text-surface-100">Rapport du {obs.date}</h2>
 		</div>
 		<div class="flex space-x-2">
-			<button onclick={() => appState.bottomView = 'list'} class="btn-primary text-xs">Sauvegarder</button>
+			<button onclick={() => appState.saveObservation()} class="btn-primary text-xs">Sauvegarder</button>
 			<button onclick={() => appState.deleteObservation()} class="btn-danger text-xs">Supprimer ce rapport</button>
 		</div>
 	</div>

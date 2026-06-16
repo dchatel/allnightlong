@@ -68,7 +68,7 @@
 		</div>
 
 		<!-- Image étirable -->
-		<div class="xl:col-span-3 relative h-44 xl:h-auto flex flex-col overflow-hidden rounded-lg">
+		<div class="lg:col-span-3 relative h-51 flex flex-col overflow-hidden rounded-lg">
 			{#if appState.isEditingTarget}
 				<div class="border border-[#333] p-2.5 rounded bg-[#1e1e21] flex flex-col flex-1 w-full">
 					<span class="text-[10px] uppercase font-bold text-surface-400 mb-1.5 block">Image de référence</span>
@@ -79,12 +79,12 @@
 			{:else}
 				<button 
 					onclick={() => appState.showMapModal = true}
-					class="border border-[#333] p-2.5 rounded bg-[#1e1e21] flex flex-col flex-1 w-full text-left group hover:border-indigo-500 transition-colors cursor-pointer"
+					class="border border-[#333] p-2.5 rounded bg-[#1e1e21] flex flex-col flex-1 h-full w-full text-left group hover:border-indigo-500 transition-colors cursor-pointer"
 				>
 					<span class="text-[10px] uppercase font-bold text-surface-400 mb-1.5 block">Image de référence</span>
 					<div class="flex-1 rounded flex items-center justify-center overflow-hidden relative bg-black/30 w-full">
 						{#if target.imageRef}
-							<img src={target.imageRef} alt="Illustration" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+							<img src={target.imageRef} alt="Illustration" class="w-full h-full object-contain group-hover:scale-105 transition-transform duration-300" />
 							<div class="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex flex-col justify-center items-center transition-opacity">
 								<span class="text-xl mb-1">🌌</span>
 								<span class="text-[9px] text-white font-bold tracking-wider uppercase">Explorer la carte céleste</span>
