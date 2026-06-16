@@ -23,7 +23,7 @@
 				<div class="flex space-x-2">
 					{#if appState.isEditingTarget}
 						<button onclick={() => appState.saveTarget()} class="btn-primary">Enregistrer</button>
-						<button onclick={() => appState.isEditingTarget = false} class="btn-secondary">Annuler</button>
+						<button onclick={() => appState.cancelEditTarget()} class="btn-secondary">Annuler</button>
 						<button onclick={() => appState.deleteTarget()} class="btn-danger">Supprimer</button>
 					{:else}
 						<button onclick={() => appState.startEditTarget()} class="btn-secondary text-xs">Modifier la cible</button>

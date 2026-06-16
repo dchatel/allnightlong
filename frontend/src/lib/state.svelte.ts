@@ -102,14 +102,23 @@ class AppState {
 
 	async saveTarget() {
 		try {
+			// On clone l'objet pour ne pas modifier l'original en cours de route
+			const targetToSave = { ...this.targetForm };
+			
+			// Si l'ID est un timestamp temporaire (> 1000000000), on le supprime.
+			// SQLite comprendra qu'il s'agit d'une création et va auto-incrémenter l'ID.
+			if (targetToSave.id && targetToSave.id > 1000000000) {
+				delete targetToSave.id;
+			}
+
 			const res = await fetch(`${API_URL}/targets`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(this.targetForm)
+				body: JSON.stringify(targetToSave)
 			});
 			const updatedTarget = await res.json();
 			
-			// Actualiser la liste locale
+			// Actualiser la liste depuis la base SQLite réelle et sélectionner le nouvel objet
 			await this.loadTargets();
 			this.selectTarget(updatedTarget.id);
 			this.isEditingTarget = false;
@@ -132,11 +141,10 @@ class AppState {
 		}
 	}
 
-	async createNewTarget() {
-		// Pas de fetch direct, on crée un formulaire vide en mode édition
-		this.selectedTargetId = null;
-		this.isEditingTarget = true;
-		this.targetForm = {
+	createNewTarget() {
+		const newId = Date.now(); // Génère un ID temporaire unique (ex: 1781234567890)
+		const newTarget = {
+			id: newId,
 			name: 'Nouvelle Cible',
 			usualName: '',
 			constellation: 'Ori',
@@ -151,6 +159,31 @@ class AppState {
 			dec: '',
 			imageRef: ''
 		};
+		
+		// On l'ajoute temporairement en mémoire et on l'active
+		this.targets.push(newTarget);
+		this.selectTarget(newId);
+		this.startEditTarget(); // Ouvre directement le formulaire d'édition
+	}
+
+	cancelEditTarget() {
+		this.isEditingTarget = false;
+		
+		// Si on annule la création d'un TOUT NOUVEL objet (ID temporaire),
+		// on le retire de la mémoire pour éviter les fantômes.
+		if (this.selectedTargetId && this.selectedTargetId > 1000000000) {
+			this.targets = this.targets.filter(t => t.id !== this.selectedTargetId);
+			if (this.targets.length > 0) {
+				this.selectTarget(this.targets[0].id);
+			} else {
+				this.selectedTargetId = null;
+			}
+		} else {
+			// Sinon (simple modification), on restaure juste le formulaire à l'état d'origine
+			if (this.activeTarget) {
+				this.targetForm = { ...this.activeTarget };
+			}
+		}
 	}
 
 	openObservation(id: number) {

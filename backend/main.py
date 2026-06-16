@@ -132,16 +132,6 @@ init_db()
 
 # ================= ENDPOINTS API (FastAPI) =================
 
-import os
-import signal
-
-@app.post("/api/shutdown")
-def shutdown_server():
-    # Envoie un signal d'interruption (équivalent de Ctrl+C) au processus lui-même [2.1.8]
-    # Cela permet à Uvicorn de s'éteindre proprement et de libérer le port 8000
-    os.kill(os.getpid(), signal.SIGINT)
-    return {"message": "Arrêt du serveur en cours..."}
-
 @app.get("/api/targets", response_model=List[TargetSchema])
 def get_targets():
     conn = sqlite3.connect(DB_PATH)

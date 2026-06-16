@@ -52,3 +52,4 @@ backend/*.pkg
 backend/*.exe
 backend/warn-allnightlong-backend.txt
 backend/xref-allnightlong-backend.html
+backend/allnightlong.db

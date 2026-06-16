@@ -23,7 +23,11 @@
 			<TargetCard />
 
 			<!-- Zone basse hybride indépendante -->
-			<div class="bg-[#161619] border border-[#2a2a2d] rounded-xl p-6 shadow-2xl flex flex-col shrink-0 h-auto xl:flex-1 xl:min-h-0 xl:overflow-hidden">
+			<div
+				class="bg-[#161619] border border-[#2a2a2d] rounded-xl p-6 shadow-2xl flex flex-col shrink-0 h-auto xl:flex-1 xl:min-h-0 xl:overflow-hidden"
+				class:opacity-30={appState.isEditingTarget}
+				class:pointer-events-none={appState.isEditingTarget}
+			>
 				{#if appState.bottomView === 'list'}
 					<ObservationHistory />
 				{:else}
