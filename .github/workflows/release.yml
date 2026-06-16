@@ -58,7 +58,7 @@ jobs:
         run: |
           mkdir -p frontend/src-tauri/bin
           # Tauri a besoin d'un suffixe strict (ex: allnightlong-backend-x86_64-pc-windows-msvc.exe)
-          cp backend/dist/allnightlong-backend${{ matrix.ext }} frontend/src-tauri/bin/allnightlong-backend-${{ matrix.rust-target }}${ { matrix.ext } }
+          cp backend/dist/allnightlong-backend${{ matrix.ext }} frontend/src-tauri/bin/allnightlong-backend-${{ matrix.rust-target }}${{ matrix.ext }}
         shell: bash
 
       # 4. PRÉPARATION DU FRONTEND

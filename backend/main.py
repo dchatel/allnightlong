@@ -16,7 +16,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DB_PATH = "astrolab.db"
+DB_PATH = "allnightlong.db"
 
 # ================= MODÈLES DE DONNÉES (Validation) =================
 class TargetSchema(BaseModel):
