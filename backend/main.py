@@ -16,7 +16,35 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DB_PATH = "allnightlong.db"
+import platform
+import os
+from pathlib import Path
+
+def get_db_path() -> str:
+    app_name = "allnightlong"
+    system = platform.system()
+    
+    if system == "Windows":
+        base_dir = os.environ.get("APPDATA")
+        if not base_dir:
+            base_dir = os.path.expanduser("~")
+    elif system == "Darwin": # macOS
+        base_dir = os.path.expanduser("~/Library/Application Support")
+    else: # Linux / Autre
+        base_dir = os.environ.get("XDG_DATA_HOME")
+        if not base_dir:
+            base_dir = os.path.expanduser("~/.local/share")
+            
+    # Créer le dossier de l'application s'il n'existe pas encore
+    db_dir = Path(base_dir) / app_name
+    db_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Renvoie le chemin absolu vers le fichier de la BDD
+    return str(db_dir / "allnightlong.db")
+
+# Initialisation du chemin vers un dossier utilisateur autorisé en écriture
+DB_PATH = get_db_path()
+print(f"Base de données SQLite initialisée à : {DB_PATH}")
 
 # ================= MODÈLES DE DONNÉES (Validation) =================
 class TargetSchema(BaseModel):

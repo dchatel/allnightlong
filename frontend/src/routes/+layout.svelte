@@ -49,6 +49,11 @@
 					console.log("Backend démarré avec PID:", pythonChild.pid);
 				} catch (error) {
 					console.error("Impossible de démarrer le backend:", error);
+					// S'il y a un échec, on l'affiche dans un vrai pop-up Windows [1.1.2]
+					await message(
+						`Erreur lors du démarrage du binaire Python :\n\n${error}`, 
+						{ title: 'Erreur Système Backend', kind: 'error' }
+					);
 				}
 			} else {
 				console.log("Mode développement : le backend doit être démarré manuellement.");
