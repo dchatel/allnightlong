@@ -1,4 +1,5 @@
 // src/lib/state.svelte.ts
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { slide, fade } from 'svelte/transition';
 
 const API_URL = "http://127.0.0.1:8000/api";
@@ -54,6 +55,17 @@ class AppState {
 	}
 
 	// --- APPELS API (COMMUNICATION AVEC LE PYTHON) ---
+
+	async closeApp(){
+		try {
+			await fetch(`${API_URL}/shutdown`, { method: 'POST' });
+		} catch (err) {
+			console.log("Déconnexion attendue lors du shutdown.");
+		}
+
+		const appWindow = getCurrentWindow();
+		await appWindow.close();
+	}
 
 	async loadTargets() {
 		try {

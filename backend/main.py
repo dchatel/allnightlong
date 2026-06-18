@@ -1,9 +1,12 @@
 import os
+import signal
 import sqlite3
 from typing import List, Optional
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+import platform
+from pathlib import Path
 
 app = FastAPI()
 
@@ -16,10 +19,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-import platform
-import os
-from pathlib import Path
-
+def self_terminate():
+    os.kill(os.getpid(), signal.SIGTERM)
+    
 def get_db_path() -> str:
     app_name = "allnightlong"
     system = platform.system()
@@ -159,6 +161,11 @@ def init_db():
 init_db()
 
 # ================= ENDPOINTS API (FastAPI) =================
+
+@app.post("/api/shutdown")
+def shutdown_server(background_tasks: BackgroundTasks):
+    background_tasks.add_task(self_terminate)
+    return {"status": "shutdown scheduled"}
 
 @app.get("/api/targets", response_model=List[TargetSchema])
 def get_targets():

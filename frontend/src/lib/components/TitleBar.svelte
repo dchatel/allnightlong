@@ -1,12 +1,14 @@
 <script lang="ts">
   import { getCurrentWindow } from '@tauri-apps/api/window';
+  import { appState } from '$lib/state.svelte';
+
   const appWindow = getCurrentWindow();
 
   let { isMaximized } = $props();
 
   const minimize = () => appWindow.minimize();
   const toggleMaximize = () => appWindow.toggleMaximize();
-  const close = () => appWindow.close();
+  const close = () => appState.closeApp();
 </script>
 
 <!-- L'attribut data-tauri-drag-region permet de déplacer la fenêtre en glissant cette div -->
