@@ -7,6 +7,20 @@
 
 @import '@skeletonlabs/skeleton/themes/crimson';
 
+/* Importation de Google Fonts (Plus Jakarta Sans pour le texte, Orbitron pour le logo et les titres) */
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
+
+/* Appliquer la police de lecture sur tout le corps du texte */
+body {
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+}
+
+/* Donner un look "Astro" unique à tes titres et à ton logo */
+h1, h2, h3, .logo, .titlebar {
+  font-family: 'Orbitron', sans-serif;
+  letter-spacing: 0.05em; /* Un léger espacement des lettres pour le look SF */
+}
+
 /* Styles globaux pour notre formulaire */
 .form-input {
     width: 100%;
