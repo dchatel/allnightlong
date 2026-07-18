@@ -47,15 +47,31 @@
 			onViewClick();
 		}
 	}
+
+	// Retire uniquement la référence en base — ne touche jamais au fichier sur le disque.
+	function handleClear(e: MouseEvent) {
+		e.stopPropagation();
+		onchange?.('');
+	}
 </script>
 
 <button 
 	onclick={handleClick}
-	class="border border-[#333] p-2.5 rounded bg-[#1e1e21] flex flex-col flex-1 w-full h-full text-left group transition-colors"
+	class="border border-[#333] p-2.5 rounded bg-[#1e1e21] flex flex-col flex-1 w-full h-full text-left group transition-colors relative"
 	class:hover:border-indigo-500={isEditing || onViewClick}
 	class:cursor-pointer={isEditing || onViewClick}
 	class:cursor-default={!isEditing && !onViewClick}
 >
+	{#if isEditing && imageUrl}
+		<button
+			onclick={handleClear}
+			title="Retirer l'image (le fichier reste sur le disque)"
+			class="absolute top-2 right-2 z-10 w-6 h-6 flex items-center justify-center rounded-full bg-black/70 hover:bg-red-600 text-white text-xs transition-colors"
+		>
+			✕
+		</button>
+	{/if}
+
 	<span class="text-[10px] uppercase font-bold text-surface-400 mb-1.5 block">{title}</span>
 	
 	<div class="flex-1 min-h-0 rounded flex items-center justify-center overflow-hidden relative bg-black/30 w-full border border-dashed border-transparent"

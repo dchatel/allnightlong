@@ -17,6 +17,12 @@
 	function thumbnail(obs: any) {
 		return obs.imageProcessed || obs.imageRaw || '';
 	}
+
+	function thumbnailKind(obs: any) {
+		if (obs.imageProcessed) return 'Traitée';
+		if (obs.imageRaw) return 'Brute';
+		return null;
+	}
 </script>
 
 <div class="h-full overflow-y-auto">
@@ -42,6 +48,12 @@
 						<img src={img} alt="Observation du {obs.date}" class="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
 					{:else}
 						<div class="absolute inset-0 flex items-center justify-center text-3xl opacity-30">🌌</div>
+					{/if}
+
+					{#if thumbnailKind(obs)}
+						<span class="absolute top-2 right-2 text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-black/60 text-surface-200">
+							{thumbnailKind(obs)}
+						</span>
 					{/if}
 
 					<!-- Dégradé pour garantir la lisibilité du texte peu importe l'image -->

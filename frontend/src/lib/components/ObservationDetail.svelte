@@ -14,15 +14,34 @@
 	function setField(key: string) {
 		return (v: any) => { appState.observationForm[key] = v; };
 	}
+
+	function handleKeydown(e: KeyboardEvent) {
+		if (e.key === 'Escape' && appState.isObservationModalOpen) {
+			appState.closeObservation();
+		}
+	}
 </script>
 
+<svelte:window onkeydown={handleKeydown} />
+
 {#if appState.isObservationModalOpen && obs}
+	<!--
+		Le clic sur ce calque de fond est une commodité souris ; l'équivalent
+		clavier est Échap (géré ci-dessus via svelte:window), pas un focus sur
+		ce div. Rendre ce calque focusable (role="button" + tabindex) serait
+		pire pour l'accessibilité : un immense piège à focus derrière la vraie
+		zone interactive, sans bénéfice réel pour un utilisateur clavier.
+	-->
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
 		transition:fade={{ duration: 150 }}
-		class="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-8"
+		onclick={() => appState.closeObservation()}
+		class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-8"
 	>
 		<div
 			transition:slide={{ duration: 200 }}
+			onclick={(e) => e.stopPropagation()}
 			class="bg-[#161619] border border-[#333] rounded-2xl w-[90vw] h-[85vh] flex flex-col overflow-hidden shadow-2xl"
 		>
 			<!-- Header -->

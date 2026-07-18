@@ -49,11 +49,15 @@ class AppState {
 	}
 
 	get calculatedLightImages() {
-		return this.activeObservation ? this.activeObservation.imgGood + this.activeObservation.imgPass : 0;
+		const source = this.isEditingObservation ? this.observationForm : this.activeObservation;
+		if (!source) return 0;
+		return (Number(source.imgGood) || 0) + (Number(source.imgPass) || 0);
 	}
 	
 	get calculatedDuration() {
-		return this.activeObservation ? (this.activeObservation.imgGood * Number(this.activeObservation.subExposure)) / 60 : 0;
+		const source = this.isEditingObservation ? this.observationForm : this.activeObservation;
+		if (!source) return 0;
+		return ((Number(source.imgGood) || 0) * Number(source.subExposure || 0)) / 60;
 	}
 
 	// --- APPELS API (COMMUNICATION AVEC LE PYTHON) ---
