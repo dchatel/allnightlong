@@ -22,17 +22,13 @@
 			<!-- Fiche d'identité fixe -->
 			<TargetCard />
 
-			<!-- Zone basse hybride indépendante -->
+			<!-- Historique des observations (toujours visible, la modal se place par-dessus) -->
 			<div
 				class="bg-[#161619] border border-[#2a2a2d] rounded-xl p-6 shadow-2xl flex flex-col shrink-0 h-auto xl:flex-1 xl:min-h-0 xl:overflow-hidden"
 				class:opacity-30={appState.isEditingTarget}
 				class:pointer-events-none={appState.isEditingTarget}
 			>
-				{#if appState.bottomView === 'list'}
-					<ObservationHistory />
-				{:else}
-					<ObservationDetail />
-				{/if}
+				<ObservationHistory />
 			</div>
 
 		{:else}
@@ -46,5 +42,6 @@
 
 </div>
 
-<!-- 3. LA MODALE CARTE (OVERLAY) -->
+<!-- 3. MODALES (OVERLAY) -->
 <MapModal />
+<ObservationDetail />

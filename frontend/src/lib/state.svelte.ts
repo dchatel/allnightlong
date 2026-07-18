@@ -14,11 +14,13 @@ class AppState {
 	selectedTargetId = $state<number | null>(null);
 	isEditingTarget = $state(false); 
 	activeObservationId = $state<number | null>(null);
-	bottomView = $state<'list' | 'detail'>('list');
+	isEditingObservation = $state(false);
 	showMapModal = $state(false);
 
 	// Clone de modification pour la cible active
 	targetForm = $state<any>({ name: '' });
+	// Clone de modification pour l'observation active
+	observationForm = $state<any>({});
 
 	constructor() {
 		// Charger les cibles célestes au démarrage de l'application
@@ -93,14 +95,8 @@ class AppState {
 	async selectTarget(id: number) {
 		this.selectedTargetId = id;
 		this.isEditingTarget = false;
-		this.bottomView = 'list';
-		this.activeObservationId = null;
-		
-		const target = this.targets.find(t => t.id === id);
-		if (target) {
-			this.targetForm = { ...target };
-		}
-		
+		this.closeObservation();
+
 		// Charger les observations réelles de cet objet depuis la base SQLite
 		await this.loadObservations(id);
 	}
@@ -116,10 +112,12 @@ class AppState {
 		try {
 			// On clone l'objet pour ne pas modifier l'original en cours de route
 			const targetToSave = { ...this.targetForm };
-			
+			const wasNewTarget = targetToSave.id && targetToSave.id > 1000000000;
+			const tempId = targetToSave.id;
+
 			// Si l'ID est un timestamp temporaire (> 1000000000), on le supprime.
 			// SQLite comprendra qu'il s'agit d'une création et va auto-incrémenter l'ID.
-			if (targetToSave.id && targetToSave.id > 1000000000) {
+			if (wasNewTarget) {
 				delete targetToSave.id;
 			}
 
@@ -128,11 +126,26 @@ class AppState {
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(targetToSave)
 			});
-			const updatedTarget = await res.json();
-			
-			// Actualiser la liste depuis la base SQLite réelle et sélectionner le nouvel objet
-			await this.loadTargets();
-			this.selectTarget(updatedTarget.id);
+			const savedTarget = await res.json();
+
+			// On fusionne le résultat du serveur dans le tableau local, sans recharger
+			// toute la base : on vient de faire la modif, on sait ce qu'il y a dedans.
+			if (wasNewTarget) {
+				// Remplace l'entrée temporaire (ID timestamp) par la vraie entrée SQLite
+				const idx = this.targets.findIndex(t => t.id === tempId);
+				if (idx !== -1) {
+					this.targets[idx] = savedTarget;
+				} else {
+					this.targets.push(savedTarget);
+				}
+			} else {
+				const idx = this.targets.findIndex(t => t.id === savedTarget.id);
+				if (idx !== -1) {
+					this.targets[idx] = savedTarget;
+				}
+			}
+
+			this.selectedTargetId = savedTarget.id;
 			this.isEditingTarget = false;
 		} catch (err) {
 			console.error("Erreur sauvegarde cible:", err);
@@ -180,7 +193,7 @@ class AppState {
 
 	cancelEditTarget() {
 		this.isEditingTarget = false;
-		
+
 		// Si on annule la création d'un TOUT NOUVEL objet (ID temporaire),
 		// on le retire de la mémoire pour éviter les fantômes.
 		if (this.selectedTargetId && this.selectedTargetId > 1000000000) {
@@ -190,24 +203,58 @@ class AppState {
 			} else {
 				this.selectedTargetId = null;
 			}
-		} else {
-			// Sinon (simple modification), on restaure juste le formulaire à l'état d'origine
-			if (this.activeTarget) {
-				this.targetForm = { ...this.activeTarget };
-			}
 		}
+		// Sinon (simple modification) : rien à faire. targetForm n'est jamais lu
+		// hors édition, donc l'original (target) redevient automatiquement
+		// la source affichée — pas de resynchronisation manuelle nécessaire.
+	}
+
+	// La modal est ouverte dès qu'une observation est active
+	get isObservationModalOpen() {
+		return this.activeObservationId !== null;
 	}
 
 	openObservation(id: number) {
 		this.activeObservationId = id;
-		this.bottomView = 'detail';
+		this.isEditingObservation = false;
+	}
+
+	closeObservation() {
+		// Si on ferme sans sauvegarder la création d'une TOUTE NOUVELLE observation
+		// (ID temporaire), on la retire de la mémoire pour éviter les fantômes —
+		// même logique que pour les cibles.
+		if (this.activeObservationId && this.activeObservationId > 1000000000) {
+			this.observations = this.observations.filter(o => o.id !== this.activeObservationId);
+		}
+		this.activeObservationId = null;
+		this.isEditingObservation = false;
+	}
+
+	startEditObservation() {
+		if (this.activeObservation) {
+			this.observationForm = { ...this.activeObservation };
+			this.isEditingObservation = true;
+		}
+	}
+
+	cancelEditObservation() {
+		this.isEditingObservation = false;
+
+		// Si on annule la création d'une TOUTE NOUVELLE observation (ID temporaire),
+		// on ferme carrément la modal — il n'y a rien à montrer en lecture.
+		if (this.activeObservationId && this.activeObservationId > 1000000000) {
+			this.closeObservation();
+		}
+		// Sinon (simple modification) : rien à faire de plus, observationForm n'est
+		// jamais lu hors édition, l'original redevient la source affichée.
 	}
 
 	async createNewObservation() {
 		if (!this.selectedTargetId) return;
-		
-		// On génère un nouveau rapport d'observation vierge lié à notre objet en cours
+
+		const newId = Date.now(); // ID temporaire, comme pour createNewTarget
 		const newObs = {
+			id: newId,
 			targetId: this.selectedTargetId,
 			date: new Date().toISOString().split('T')[0],
 			obsStart: '',
@@ -227,34 +274,47 @@ class AppState {
 			imageProcessed: ''
 		};
 
-		try {
-			// On l'enregistre immédiatement dans la base SQLite via l'API
-			const res = await fetch(`${API_URL}/observations`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(newObs)
-			});
-			const savedObs = await res.json();
-			
-			// On actualise la liste et on l'ouvre
-			await this.loadObservations(this.selectedTargetId);
-			this.openObservation(savedObs.id);
-		} catch (err) {
-			console.error("Erreur création observation:", err);
-		}
+		// On l'ajoute temporairement en mémoire et on ouvre directement l'édition,
+		// exactement comme createNewTarget — rien n'est envoyé au serveur tant que
+		// l'utilisateur n'a pas cliqué "Enregistrer".
+		this.observations.push(newObs);
+		this.openObservation(newId);
+		this.startEditObservation();
 	}
 
 	async saveObservation() {
-		if (!this.activeObservation) return;
 		try {
-			await fetch(`${API_URL}/observations`, {
+			const obsToSave = { ...this.observationForm };
+			const wasNewObs = obsToSave.id && obsToSave.id > 1000000000;
+			const tempId = obsToSave.id;
+
+			if (wasNewObs) {
+				delete obsToSave.id;
+			}
+
+			const res = await fetch(`${API_URL}/observations`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(this.activeObservation)
+				body: JSON.stringify(obsToSave)
 			});
-			// Svelte 5 met à jour automatiquement car l'objet est lié
-			this.bottomView = 'list';
-			await this.loadObservations(this.selectedTargetId!);
+			const savedObs = await res.json();
+
+			if (wasNewObs) {
+				const idx = this.observations.findIndex(o => o.id === tempId);
+				if (idx !== -1) {
+					this.observations[idx] = savedObs;
+				} else {
+					this.observations.push(savedObs);
+				}
+			} else {
+				const idx = this.observations.findIndex(o => o.id === savedObs.id);
+				if (idx !== -1) {
+					this.observations[idx] = savedObs;
+				}
+			}
+
+			this.activeObservationId = savedObs.id;
+			this.isEditingObservation = false;
 		} catch (err) {
 			console.error("Erreur sauvegarde observation:", err);
 		}
@@ -266,9 +326,9 @@ class AppState {
 		if (confirmDelete) {
 			try {
 				await fetch(`${API_URL}/observations/${this.activeObservationId}`, { method: 'DELETE' });
-				await this.loadObservations(this.selectedTargetId!);
-				this.bottomView = 'list';
+				this.observations = this.observations.filter(o => o.id !== this.activeObservationId);
 				this.activeObservationId = null;
+				this.isEditingObservation = false;
 			} catch (err) {
 				console.error("Erreur suppression observation:", err);
 			}

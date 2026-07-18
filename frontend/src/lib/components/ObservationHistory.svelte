@@ -1,47 +1,65 @@
 <script lang="ts">
 	import { appState } from '$lib/state.svelte';
-	import { fade, slide } from 'svelte/transition'; // [3]
+	import { convertFileSrc } from '@tauri-apps/api/core';
+
+	function displayUrl(imageUrl: string) {
+		if (!imageUrl) return '';
+		if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) return imageUrl;
+		try {
+			return convertFileSrc(imageUrl);
+		} catch (e) {
+			return imageUrl;
+		}
+	}
+
+	// Image traitée en priorité (résultat final, plus représentatif en vignette),
+	// on retombe sur le raw si elle n'existe pas encore.
+	function thumbnail(obs: any) {
+		return obs.imageProcessed || obs.imageRaw || '';
+	}
 </script>
 
-<div in:fade={{ duration: 150 }} out:slide={{ duration: 150 }} class="flex flex-col h-auto xl:h-full space-y-6">
-	<div class="flex justify-between items-center shrink-0">
-		<h2 class="text-sm font-bold uppercase tracking-widest text-surface-400">Historique des Observations ({appState.activeTargetObservations.length})</h2>
-		<button onclick={() => appState.createNewObservation()} class="btn-primary text-xs">+ Nouvelle observation</button>
+<div class="h-full overflow-y-auto">
+	<div class="flex items-center justify-between mb-4 shrink-0">
+		<h2 class="text-sm font-bold uppercase tracking-widest text-surface-100">Historique des observations</h2>
+		<button onclick={() => appState.createNewObservation()} class="btn-primary text-xs">+ Nouveau rapport</button>
 	</div>
 
 	{#if appState.activeTargetObservations.length === 0}
-		<div class="text-center py-16 text-surface-400/50">
-			<p class="text-3xl mb-2">🔭</p>
-			<p class="text-sm">Aucun rapport pour cet objet céleste.</p>
+		<div class="h-40 flex flex-col items-center justify-center text-surface-400 text-xs opacity-60">
+			<span class="text-2xl mb-2">🔭</span>
+			Aucune observation enregistrée pour cette cible
 		</div>
 	{:else}
-		<div class="overflow-x-auto xl:flex-1 xl:min-h-0 xl:overflow-y-auto pr-1">
-			<table class="w-full text-left border-collapse text-sm">
-				<thead>
-					<tr class="border-b border-[#333] text-surface-400 text-xs uppercase tracking-wider">
-						<th class="py-3 px-4">Date</th>
-						<th class="py-3 px-4">Localisation</th>
-						<th class="py-3 px-4">Durée de pose</th>
-						<th class="py-3 px-4">Notes</th>
-						<th class="py-3 px-4 text-right">Action</th>
-					</tr>
-				</thead>
-				<tbody class="divide-y divide-[#2a2a2d]">
-					{#each appState.activeTargetObservations as obs}
-						<tr class="hover:bg-[#202024]/50 transition-colors cursor-pointer" onclick={() => appState.openObservation(obs.id)}>
-							<td class="py-3.5 px-4 font-bold text-white">📅 {obs.date}</td>
-							<td class="py-3.5 px-4 text-surface-400">{obs.location}</td>
-							<td class="py-3.5 px-4 text-surface-400">
-								{((obs.imgGood * Number(obs.subExposure)) / 60).toFixed(1)} minutes
-							</td>
-							<td class="py-3.5 px-4 text-surface-400 truncate max-w-xs">{obs.otherObjects || 'Aucune note'}</td>
-							<td class="py-3.5 px-4 text-right">
-								<span class="text-xs text-indigo-400 font-bold hover:underline">Ouvrir la fiche →</span>
-							</td>
-						</tr>
-					{/each}
-				</tbody>
-			</table>
+		<div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
+			{#each appState.activeTargetObservations as obs (obs.id)}
+				{@const img = displayUrl(thumbnail(obs))}
+				<button
+					onclick={() => appState.openObservation(obs.id)}
+					class="relative aspect-square rounded-lg overflow-hidden border border-[#333] bg-[#1e1e21] group text-left"
+				>
+					{#if img}
+						<img src={img} alt="Observation du {obs.date}" class="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+					{:else}
+						<div class="absolute inset-0 flex items-center justify-center text-3xl opacity-30">🌌</div>
+					{/if}
+
+					<!-- Dégradé pour garantir la lisibilité du texte peu importe l'image -->
+					<div class="absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-transparent"></div>
+
+					<div class="absolute bottom-0 left-0 right-0 p-3">
+						<span class="text-sm font-bold text-white block">{obs.date}</span>
+						<span class="text-[10px] text-surface-300 block">{obs.location || '—'}</span>
+						{#if obs.imgGood || obs.imgPass || obs.imgBad}
+							<div class="flex gap-1 mt-1.5 h-1 rounded-full overflow-hidden w-24">
+								<div class="bg-green-400" style="flex: {obs.imgGood || 0}"></div>
+								<div class="bg-yellow-500" style="flex: {obs.imgPass || 0}"></div>
+								<div class="bg-red-500" style="flex: {obs.imgBad || 0}"></div>
+							</div>
+						{/if}
+					</div>
+				</button>
+			{/each}
 		</div>
 	{/if}
 </div>

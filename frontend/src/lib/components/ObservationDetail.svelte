@@ -1,143 +1,230 @@
 <script lang="ts">
 	import { appState } from '$lib/state.svelte';
-	import { fade, slide } from 'svelte/transition'; // [3]
+	import { fade, slide } from 'svelte/transition';
+	import ImagePicker from '$lib/components/ImagePicker.svelte';
 
-    let obs = $derived(appState.activeObservation!);
+	let obs = $derived(appState.activeObservation);
+
+	// Lecture : source = obs (original) hors édition, observationForm pendant l'édition.
+	// Écriture : toujours vers observationForm — jamais l'original tant que ce n'est
+	// pas sauvegardé. Même principe que TargetCard.
+	function fieldValue(key: string) {
+		return appState.isEditingObservation ? appState.observationForm[key] : obs?.[key];
+	}
+	function setField(key: string) {
+		return (v: any) => { appState.observationForm[key] = v; };
+	}
 </script>
 
-<div in:slide={{ duration: 150 }} out:fade={{ duration: 150 }} class="flex flex-col h-auto xl:h-full space-y-6">
-	
-	<!-- Header -->
-	<div class="flex justify-between items-center border-b border-[#333] pb-4 shrink-0">
-		<div class="flex items-center space-x-3">
-			<button onclick={() => appState.bottomView = 'list'} class="btn-secondary text-xs">← Retour à l'historique</button>
-			<h2 class="text-sm font-bold uppercase tracking-widest text-surface-100">Rapport du {obs.date}</h2>
-		</div>
-		<div class="flex space-x-2">
-			<button onclick={() => appState.saveObservation()} class="btn-primary text-xs">Sauvegarder</button>
-			<button onclick={() => appState.deleteObservation()} class="btn-danger text-xs">Supprimer ce rapport</button>
+{#if appState.isObservationModalOpen && obs}
+	<div
+		transition:fade={{ duration: 150 }}
+		class="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-8"
+	>
+		<div
+			transition:slide={{ duration: 200 }}
+			class="bg-[#161619] border border-[#333] rounded-2xl w-[90vw] h-[85vh] flex flex-col overflow-hidden shadow-2xl"
+		>
+			<!-- Header -->
+			<div class="h-14 border-b border-[#333] bg-[#1a1a1d] px-6 flex items-center justify-between shrink-0 select-none">
+				<div class="flex items-center space-x-3">
+					<span class="text-xl">🔭</span>
+					<h2 class="text-sm font-bold uppercase tracking-widest text-white">
+						Rapport du {fieldValue('date')}
+					</h2>
+				</div>
+				<div class="flex items-center space-x-2">
+					{#if appState.isEditingObservation}
+						<button onclick={() => appState.saveObservation()} class="btn-primary text-xs">Enregistrer</button>
+						<button onclick={() => appState.cancelEditObservation()} class="btn-secondary text-xs">Annuler</button>
+						<button onclick={() => appState.deleteObservation()} class="btn-danger text-xs">Supprimer</button>
+					{:else}
+						<button onclick={() => appState.startEditObservation()} class="btn-secondary text-xs">Modifier ce rapport</button>
+					{/if}
+					<button
+						onclick={() => appState.closeObservation()}
+						class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-surface-800 text-surface-400 hover:text-white transition-colors text-lg ml-2"
+					>
+						✕
+					</button>
+				</div>
+			</div>
+
+			<!-- Contenu -->
+			<div class="flex-1 min-h-0 overflow-y-auto p-6">
+				<div class="grid grid-cols-1 xl:grid-cols-12 gap-8">
+
+					<div class="xl:col-span-8 space-y-6">
+						<div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+
+							<!-- SESSION -->
+							<div class="space-y-4 bg-[#1e1e21] p-4 rounded-lg border border-[#333]">
+								<span class="text-[10px] uppercase font-bold text-surface-400 block border-b border-[#333] pb-1.5">1. Session</span>
+								<div>
+									<label for="obs-date" class="block text-[10px] text-surface-400 mb-1">Date</label>
+									{#if appState.isEditingObservation}
+										<input id="obs-date" type="date" class="form-input" value={fieldValue('date')} oninput={(e) => setField('date')(e.currentTarget.value)} />
+									{:else}
+										<span id="obs-date" class="block text-sm text-white">{fieldValue('date')}</span>
+									{/if}
+								</div>
+								<div class="grid grid-cols-2 gap-2">
+									<div>
+										<label for="obs-obsStart" class="block text-[10px] text-surface-400 mb-1">Début</label>
+										{#if appState.isEditingObservation}
+											<input id="obs-obsStart" type="time" class="form-input" value={fieldValue('obsStart')} oninput={(e) => setField('obsStart')(e.currentTarget.value)} />
+										{:else}
+											<span id="obs-obsStart" class="block text-sm text-white">{fieldValue('obsStart') || '—'}</span>
+										{/if}
+									</div>
+									<div>
+										<label for="obs-obsEnd" class="block text-[10px] text-surface-400 mb-1">Fin</label>
+										{#if appState.isEditingObservation}
+											<input id="obs-obsEnd" type="time" class="form-input" value={fieldValue('obsEnd')} oninput={(e) => setField('obsEnd')(e.currentTarget.value)} />
+										{:else}
+											<span id="obs-obsEnd" class="block text-sm text-white">{fieldValue('obsEnd') || '—'}</span>
+										{/if}
+									</div>
+								</div>
+								<div>
+									<label for="obs-location" class="block text-[10px] text-surface-400 mb-1">Localisation</label>
+									{#if appState.isEditingObservation}
+										<input id="obs-location" type="text" class="form-input" value={fieldValue('location')} oninput={(e) => setField('location')(e.currentTarget.value)} />
+									{:else}
+										<span id="obs-location" class="block text-sm text-white">{fieldValue('location') || '—'}</span>
+									{/if}
+								</div>
+								<div>
+									<label for="obs-altitude" class="block text-[10px] text-surface-400 mb-1">Hauteur de cible (°)</label>
+									{#if appState.isEditingObservation}
+										<input id="obs-altitude" type="text" class="form-input" value={fieldValue('altitude')} oninput={(e) => setField('altitude')(e.currentTarget.value)} />
+									{:else}
+										<span id="obs-altitude" class="block text-sm text-white">{fieldValue('altitude') || '—'}</span>
+									{/if}
+								</div>
+							</div>
+
+							<!-- POSE -->
+							<div class="space-y-4 bg-[#1e1e21] p-4 rounded-lg border border-[#333]">
+								<span class="text-[10px] uppercase font-bold text-surface-400 block border-b border-[#333] pb-1.5">2. Matériel & Pose</span>
+								<div>
+									<label for="obs-sensor" class="block text-[10px] text-surface-400 mb-1">Capteur</label>
+									{#if appState.isEditingObservation}
+										<input id="obs-sensor" type="text" class="form-input" value={fieldValue('sensor')} oninput={(e) => setField('sensor')(e.currentTarget.value)} />
+									{:else}
+										<span id="obs-sensor" class="block text-sm text-white">{fieldValue('sensor') || '—'}</span>
+									{/if}
+								</div>
+								<div>
+									<label for="obs-filter" class="block text-[10px] text-surface-400 mb-1">Filtre</label>
+									{#if appState.isEditingObservation}
+										<input id="obs-filter" type="text" class="form-input" value={fieldValue('filter')} oninput={(e) => setField('filter')(e.currentTarget.value)} />
+									{:else}
+										<span id="obs-filter" class="block text-sm text-white">{fieldValue('filter') || '—'}</span>
+									{/if}
+								</div>
+								<div>
+									<label for="obs-sensorTemp" class="block text-[10px] text-surface-400 mb-1">Temp. Capteur (°C)</label>
+									{#if appState.isEditingObservation}
+										<input id="obs-sensorTemp" type="text" class="form-input" value={fieldValue('sensorTemp')} oninput={(e) => setField('sensorTemp')(e.currentTarget.value)} />
+									{:else}
+										<span id="obs-sensorTemp" class="block text-sm text-white">{fieldValue('sensorTemp') || '—'}</span>
+									{/if}
+								</div>
+								<div>
+									<label for="obs-subExposure" class="block text-[10px] text-surface-400 mb-1">Pose indiv. (s)</label>
+									{#if appState.isEditingObservation}
+										<input id="obs-subExposure" type="text" class="form-input" value={fieldValue('subExposure')} oninput={(e) => setField('subExposure')(e.currentTarget.value)} />
+									{:else}
+										<span id="obs-subExposure" class="block text-sm text-white">{fieldValue('subExposure') || '—'}</span>
+									{/if}
+								</div>
+							</div>
+
+							<!-- IMAGES STATS -->
+							<div class="space-y-4 bg-[#1e1e21] p-4 rounded-lg border border-[#333]">
+								<span class="text-[10px] uppercase font-bold text-surface-400 block border-b border-[#333] pb-1.5">3. Images</span>
+								<div class="grid grid-cols-2 gap-2">
+									<div>
+										<label for="obs-imgTotal" class="block text-[10px] text-surface-400 mb-1">Total</label>
+										{#if appState.isEditingObservation}
+											<input id="obs-imgTotal" type="number" class="form-input" value={fieldValue('imgTotal')} oninput={(e) => setField('imgTotal')(Number(e.currentTarget.value))} />
+										{:else}
+											<span id="obs-imgTotal" class="block text-sm text-white">{fieldValue('imgTotal') ?? 0}</span>
+										{/if}
+									</div>
+									<div>
+										<span class="block text-[10px] text-indigo-400 mb-1 font-bold">Lights</span>
+										<span class="block text-sm font-bold text-indigo-400">{appState.calculatedLightImages}</span>
+									</div>
+								</div>
+								<div class="grid grid-cols-3 gap-1 text-[9px]">
+									<div>
+										<label for="obs-imgGood" class="block text-[9px] text-green-400 mb-1">Bon</label>
+										{#if appState.isEditingObservation}
+											<input id="obs-imgGood" type="number" class="form-input px-1" value={fieldValue('imgGood')} oninput={(e) => setField('imgGood')(Number(e.currentTarget.value))} />
+										{:else}
+											<span class="block text-sm text-green-400">{fieldValue('imgGood') ?? 0}</span>
+										{/if}
+									</div>
+									<div>
+										<label for="obs-imgPass" class="block text-[9px] text-yellow-500 mb-1">Pass</label>
+										{#if appState.isEditingObservation}
+											<input id="obs-imgPass" type="number" class="form-input px-1" value={fieldValue('imgPass')} oninput={(e) => setField('imgPass')(Number(e.currentTarget.value))} />
+										{:else}
+											<span class="block text-sm text-yellow-500">{fieldValue('imgPass') ?? 0}</span>
+										{/if}
+									</div>
+									<div>
+										<label for="obs-imgBad" class="block text-[9px] text-red-500 mb-1">Bad</label>
+										{#if appState.isEditingObservation}
+											<input id="obs-imgBad" type="number" class="form-input px-1" value={fieldValue('imgBad')} oninput={(e) => setField('imgBad')(Number(e.currentTarget.value))} />
+										{:else}
+											<span class="block text-sm text-red-500">{fieldValue('imgBad') ?? 0}</span>
+										{/if}
+									</div>
+								</div>
+								<div class="border-t border-[#333] pt-2">
+									<span class="text-[10px] text-surface-400 block mb-1">Durée totale :</span>
+									<span class="text-sm font-black text-white">{appState.calculatedDuration.toFixed(1)} min</span>
+								</div>
+							</div>
+
+						</div>
+
+						<div>
+							<label for="obs-otherObjects" class="block text-xs text-surface-400 mb-1">Autres objets dans le champ / Notes</label>
+							{#if appState.isEditingObservation}
+								<textarea id="obs-otherObjects" class="form-input h-24 resize-none py-2" value={fieldValue('otherObjects')} oninput={(e) => setField('otherObjects')(e.currentTarget.value)}></textarea>
+							{:else}
+								<p id="obs-otherObjects" class="text-sm text-white whitespace-pre-wrap min-h-[3rem]">{fieldValue('otherObjects') || '—'}</p>
+							{/if}
+						</div>
+					</div>
+
+					<!-- Images -->
+					<div class="xl:col-span-4 space-y-4">
+						<div class="h-64 flex flex-col">
+							<ImagePicker
+								title="Image Brute (Seestar)"
+								imageUrl={fieldValue('imageRaw')}
+								onchange={setField('imageRaw')}
+								isEditing={appState.isEditingObservation}
+							/>
+						</div>
+
+						<div class="h-64 flex flex-col">
+							<ImagePicker
+								title="Image finale traitée"
+								imageUrl={fieldValue('imageProcessed')}
+								onchange={setField('imageProcessed')}
+								isEditing={appState.isEditingObservation}
+							/>
+						</div>
+					</div>
+
+				</div>
+			</div>
 		</div>
 	</div>
-
-	<!-- Formulaire & Images (Défilement indépendant !) [3] -->
-	<div class="grid grid-cols-1 xl:grid-cols-12 gap-8 xl:flex-1 xl:min-h-0 xl:overflow-y-auto pr-2">
-		
-		<div class="xl:col-span-8 space-y-6">
-			<div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-				
-				<!-- SESSION -->
-				<div class="space-y-4 bg-[#1e1e21] p-4 rounded-lg border border-[#333]">
-					<span class="text-[10px] uppercase font-bold text-surface-400 block border-b border-[#333] pb-1.5">1. Session</span>
-					<div>
-						<label for="obs-date" class="block text-[10px] text-surface-400 mb-1">Date</label>
-						<input id="obs-date" type="date" class="form-input" bind:value={obs.date} />
-					</div>
-					<div class="grid grid-cols-2 gap-2">
-						<div>
-							<label for="obs-obsStart" class="block text-[10px] text-surface-400 mb-1">Début</label>
-							<input id="obs-obsStart" type="time" class="form-input" bind:value={obs.obsStart} />
-						</div>
-						<div>
-							<label for="obs-obsEnd" class="block text-[10px] text-surface-400 mb-1">Fin</label>
-							<input id="obs-obsEnd" type="time" class="form-input" bind:value={obs.obsEnd} />
-						</div>
-					</div>
-					<div>
-						<label for="obs-location" class="block text-[10px] text-surface-400 mb-1">Localisation</label>
-						<input id="obs-location" type="text" class="form-input" bind:value={obs.location} />
-					</div>
-					<div>
-						<label for="obs-altitude" class="block text-[10px] text-surface-400 mb-1">Hauteur de cible (°)</label>
-                        <input id="obs-altitude" type="text" class="form-input" bind:value={obs.altitude} />
-					</div>
-				</div>
-
-				<!-- POSE -->
-				<div class="space-y-4 bg-[#1e1e21] p-4 rounded-lg border border-[#333]">
-					<span class="text-[10px] uppercase font-bold text-surface-400 block border-b border-[#333] pb-1.5">2. Matériel & Pose</span>
-					<div>
-						<label for="obs-sensor" class="block text-[10px] text-surface-400 mb-1">Capteur</label>
-                        <input id="obs-sensor" type="text" class="form-input" bind:value={obs.sensor} />
-					</div>
-					<div>
-						<label for="obs-filter" class="block text-[10px] text-surface-400 mb-1">Filtre</label>
-                        <input id="obs-filter" type="text" class="form-input" bind:value={obs.filter} />
-					</div>
-					<div>
-						<label for="obs-sensorTemp" class="block text-[10px] text-surface-400 mb-1">Temp. Capteur (°C)</label>
-                        <input id="obs-sensorTemp" type="text" class="form-input" bind:value={obs.sensorTemp} />
-					</div>
-					<div>
-						<label for="obs-subExposure" class="block text-[10px] text-surface-400 mb-1">Pose indiv. (s)</label>
-                        <input id="obs-subExposure" type="text" class="form-input" bind:value={obs.subExposure} />
-					</div>
-				</div>
-
-				<!-- IMAGES STATS -->
-				<div class="space-y-4 bg-[#1e1e21] p-4 rounded-lg border border-[#333]">
-					<span class="text-[10px] uppercase font-bold text-surface-400 block border-b border-[#333] pb-1.5">3. Images</span>
-					<div class="grid grid-cols-2 gap-2">
-						<div>
-							<label for="obs-imgTotal" class="block text-[10px] text-surface-400 mb-1">Total</label>
-                            <input id="obs-imgTotal" type="number" class="form-input" bind:value={obs.imgTotal} />
-						</div>
-						<div>
-							<label for="obs-lightImages" class="block text-[10px] text-indigo-400 mb-1 font-bold">Lights</label>
-                            <input id="obs-lightImages" type="text" class="form-input text-indigo-400 font-bold bg-[#1a1a1d]" disabled value={appState.calculatedLightImages} />
-                        </div>
-					</div>
-					<div class="grid grid-cols-3 gap-1 text-[9px]">
-						<div>
-							<label for="obs-imgGood" class="block text-[9px] text-green-400 mb-1">Bon</label>
-                            <input id="obs-imgGood" type="number" class="form-input px-1" bind:value={obs.imgGood} />
-						</div>
-						<div>
-							<label for="obs-imgPass" class="block text-[9px] text-yellow-500 mb-1">Pass</label>
-                            <input id="obs-imgPass" type="number" class="form-input px-1" bind:value={obs.imgPass} />
-						</div>
-						<div>
-							<label for="obs-imgBad" class="block text-[9px] text-red-500 mb-1">Bad</label>
-                            <input id="obs-imgBad" type="number" class="form-input px-1" bind:value={obs.imgBad} />
-						</div>
-					</div>
-					<div class="border-t border-[#333] pt-2">
-						<span class="text-[10px] text-surface-400 block mb-1">Durée totale :</span>
-						<span class="text-sm font-black text-white">{appState.calculatedDuration.toFixed(1)} min</span>
-					</div>
-				</div>
-
-			</div>
-
-			<div class="col-span-3">
-				<label for="obs-otherObjects" class="block text-xs text-surface-400 mb-1">Autres objets dans le champ / Notes</label>
-                <textarea id="obs-otherObjects" class="form-input h-24 resize-none py-2" bind:value={obs.otherObjects}></textarea>
-			</div>
-		</div>
-
-		<!-- Images -->
-		<div class="xl:col-span-4 space-y-4">
-			<div class="border border-[#333] p-3 rounded bg-[#1a1a1d] flex flex-col h-60">
-				<span class="text-[10px] uppercase font-bold text-surface-400 mb-2">Image Brute (Seestar)</span>
-				<div class="flex-1 border border-dashed border-[#444] rounded flex flex-col items-center justify-center overflow-hidden relative group">
-					{#if obs.imageRaw}
-						<img src={obs.imageRaw} alt="Brute" class="w-full h-full object-cover" />
-					{:else}
-						<span class="text-[10px] text-[#555] font-bold">Lier JPEG Seestar</span>
-					{/if}
-				</div>
-			</div>
-
-			<div class="border border-[#333] p-3 rounded bg-[#1a1a1d] flex flex-col h-60">
-				<span class="text-[10px] uppercase font-bold text-surface-400 mb-2">Image finale traitée</span>
-				<div class="flex-1 border border-dashed border-[#444] rounded flex flex-col items-center justify-center overflow-hidden relative group">
-					{#if obs.imageProcessed}
-						<img src={obs.imageProcessed} alt="Traitée" class="w-full h-full object-cover" />
-					{:else}
-						<span class="text-[10px] text-[#555] font-bold">Lier image finale</span>
-					{/if}
-				</div>
-			</div>
-		</div>
-
-	</div>
-</div>
+{/if}
