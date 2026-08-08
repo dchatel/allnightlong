@@ -5,6 +5,30 @@
 
 	let obs = $derived(appState.activeObservation);
 
+	// --- CALCULS DU GRAPHIQUE SVG (ANNEAU ÉPAIS ANIMÉ) ---
+	let goodCount = $derived(Number(fieldValue('imgGood')) || 0);
+	let passCount = $derived(Number(fieldValue('imgPass')) || 0);
+	let badCount = $derived(Number(fieldValue('imgBad')) || 0);
+	let totalGraded = $derived(goodCount + passCount + badCount);
+
+	let goodPct = $derived(totalGraded === 0 ? 0 : (goodCount / totalGraded) * 100);
+	let passPct = $derived(totalGraded === 0 ? 0 : (passCount / totalGraded) * 100);
+	let badPct = $derived(totalGraded === 0 ? 0 : (badCount / totalGraded) * 100);
+
+	// On ajoute un gap (2%) uniquement s'il y a plus d'une catégorie utilisée
+	let activeSegments = $derived((goodCount > 0 ? 1 : 0) + (passCount > 0 ? 1 : 0) + (badCount > 0 ? 1 : 0));
+	let gap = $derived(activeSegments > 1 ? 2 : 0);
+
+	// Longueur de chaque segment (on soustrait le gap pour faire la coupure)
+	let goodDash = $derived(goodPct > gap ? goodPct - gap : goodPct);
+	let passDash = $derived(passPct > gap ? passPct - gap : passPct);
+	let badDash = $derived(badPct > gap ? badPct - gap : badPct);
+
+	// Position de départ de chaque segment sur le cercle
+	let passOffset = $derived(-goodPct);
+	let badOffset = $derived(-(goodPct + passPct));
+	// ------------------------------------------------------
+
 	// Lecture : source = obs (original) hors édition, observationForm pendant l'édition.
 	// Écriture : toujours vers observationForm — jamais l'original tant que ce n'est
 	// pas sauvegardé. Même principe que TargetCard.
@@ -70,11 +94,11 @@
 			</div>
 
 			<!-- Contenu -->
-			<div class="flex-1 min-h-0 overflow-y-auto p-6">
-				<div class="grid grid-cols-1 xl:grid-cols-12 gap-8">
+			<div class="flex-1 min-h-0 overflow-y-auto p-6 flex flex-col">
+				<div class="grid grid-cols-1 xl:grid-cols-12 gap-8 flex-1">
 
-					<div class="xl:col-span-8 space-y-6">
-						<div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+					<div class="xl:col-span-8 flex flex-col gap-6">
+						<div class="grid grid-cols-1 md:grid-cols-3 gap-6 shrink-0">
 
 							<!-- SESSION -->
 							<div class="space-y-4 bg-[#1e1e21] p-4 rounded-lg border border-[#333]">
@@ -203,20 +227,55 @@
 										{/if}
 									</div>
 								</div>
-								<div class="border-t border-[#333] pt-2">
-									<span class="text-[10px] text-surface-400 block mb-1">Durée totale :</span>
-									<span class="text-sm font-black text-white">{appState.calculatedDuration.toFixed(1)} min</span>
+								<div class="border-t border-[#333] pt-4 mt-2 flex items-center gap-6">
+									<!-- GRAPHIQUE (Anneau très épais en bas à gauche) -->
+									<div class="w-16 h-16 shrink-0 relative drop-shadow-md">
+										<!-- 
+											Astuce mathématique : Un cercle de rayon 15.9155 a une circonférence exacte de 100.
+											Cela permet de mapper directement nos pourcentages (0 à 100) sur le stroke-dasharray !
+										-->
+										<svg viewBox="0 0 44 44" class="w-full h-full transform -rotate-90">
+											<!-- Fond / Cercle vide (gris) -->
+											<circle cx="22" cy="22" r="15.9155" fill="transparent" class="stroke-[#2a2a2e]" stroke-width="12" />
+											
+											<!-- Segment : Bon (Vert) -->
+											<circle cx="22" cy="22" r="15.9155" fill="transparent" class="stroke-green-400" stroke-width="12" 
+												stroke-dasharray="{goodDash} 100" stroke-dashoffset="0" 
+												style="transition: stroke-dasharray 0.6s cubic-bezier(0.4, 0, 0.2, 1), stroke-dashoffset 0.6s cubic-bezier(0.4, 0, 0.2, 1);" />
+												
+											<!-- Segment : Pass (Jaune) -->
+											<circle cx="22" cy="22" r="15.9155" fill="transparent" class="stroke-yellow-500" stroke-width="12" 
+												stroke-dasharray="{passDash} 100" stroke-dashoffset="{passOffset}" 
+												style="transition: stroke-dasharray 0.6s cubic-bezier(0.4, 0, 0.2, 1), stroke-dashoffset 0.6s cubic-bezier(0.4, 0, 0.2, 1);" />
+												
+											<!-- Segment : Bad (Rouge) -->
+											<circle cx="22" cy="22" r="15.9155" fill="transparent" class="stroke-red-500" stroke-width="12" 
+												stroke-dasharray="{badDash} 100" stroke-dashoffset="{badOffset}" 
+												style="transition: stroke-dasharray 0.6s cubic-bezier(0.4, 0, 0.2, 1), stroke-dashoffset 0.6s cubic-bezier(0.4, 0, 0.2, 1);" />
+										</svg>
+										
+										<!-- Petit label central optionnel (ex: % total, ou on le laisse vide) -->
+										{#if totalGraded === 0}
+											<div class="absolute inset-0 flex items-center justify-center text-[10px] text-surface-500">?</div>
+										{/if}
+									</div>
+
+									<!-- TEXTE DURÉE TOTALE (Décalé sur la droite) -->
+									<div class="flex flex-col">
+										<span class="text-[10px] text-surface-400 mb-1">Durée totale</span>
+										<span class="text-xl font-black text-white">{appState.calculatedDuration.toFixed(1)} <span class="text-xs text-surface-400 font-bold">min</span></span>
+									</div>
 								</div>
 							</div>
 
 						</div>
 
-						<div>
-							<label for="obs-otherObjects" class="block text-xs text-surface-400 mb-1">Autres objets dans le champ / Notes</label>
+						<div class="flex-1 flex flex-col min-h-0">
+							<label for="obs-otherObjects" class="block text-xs text-surface-400 mb-1 shrink-0">Autres objets dans le champ / Notes</label>
 							{#if appState.isEditingObservation}
-								<textarea id="obs-otherObjects" class="form-input h-24 resize-none py-2" value={fieldValue('otherObjects')} oninput={(e) => setField('otherObjects')(e.currentTarget.value)}></textarea>
+								<textarea id="obs-otherObjects" class="form-input flex-1 min-h-24 resize-none py-2" value={fieldValue('otherObjects')} oninput={(e) => setField('otherObjects')(e.currentTarget.value)}></textarea>
 							{:else}
-								<p id="obs-otherObjects" class="text-sm text-white whitespace-pre-wrap min-h-[3rem]">{fieldValue('otherObjects') || '—'}</p>
+								<p id="obs-otherObjects" class="text-sm text-white whitespace-pre-wrap flex-1 overflow-y-auto min-h-12">{fieldValue('otherObjects') || '—'}</p>
 							{/if}
 						</div>
 					</div>

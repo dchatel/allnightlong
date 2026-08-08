@@ -52,35 +52,67 @@
 			<div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
 				<div>
 					<label for="target-constellation" class="text-surface-400 block mb-1">Constellation</label>
-					<Input id="target-constellation" isEditing={appState.isEditingTarget} class="form-input" value={fieldValue('constellation')} onchange={setField('constellation')} />
+					{#if appState.isEditingTarget}
+						<Input id="target-constellation" isEditing={appState.isEditingTarget} class="form-input" value={fieldValue('constellation')} onchange={setField('constellation')} />
+					{:else}
+						<span id="target-constellation">{fieldValue('constellation')}</span>
+					{/if}
 				</div>
 				<div>
 					<label for="target-otherDesignations" class="text-surface-400 block mb-1">Désignations</label>
-					<Input id="target-otherDesignations" isEditing={appState.isEditingTarget} class="form-input" value={fieldValue('otherDesignations')} onchange={setField('otherDesignations')} />
+					{#if appState.isEditingTarget}
+						<Input id="target-otherDesignations" isEditing={appState.isEditingTarget} class="form-input" value={fieldValue('otherDesignations')} onchange={setField('otherDesignations')} />
+					{:else}
+						<span id="target-otherDesignations">{fieldValue('otherDesignations')}</span>
+					{/if}
 				</div>
 				<div>
 					<label for="target-type" class="text-surface-400 block mb-1">Type d'objet</label>
-					<Input id="target-type" isEditing={appState.isEditingTarget} class="form-input" value={fieldValue('type')} onchange={setField('type')} />
+					{#if appState.isEditingTarget}
+						<Input id="target-type" isEditing={appState.isEditingTarget} class="form-input" value={fieldValue('type')} onchange={setField('type')} />
+					{:else}
+						<span id="target-type">{fieldValue('type')}</span>
+					{/if}
 				</div>
 				<div>
 					<label for="target-magnitude" class="text-surface-400 block mb-1">Magnitude</label>
-					<Input id="target-magnitude" isEditing={appState.isEditingTarget} class="form-input" value={fieldValue('magnitude')} onchange={setField('magnitude')} />
+					{#if appState.isEditingTarget}
+						<Input id="target-magnitude" isEditing={appState.isEditingTarget} class="form-input" value={fieldValue('magnitude')} onchange={setField('magnitude')} />
+					{:else}
+						<span id="target-magnitude">{fieldValue('magnitude')}</span>
+					{/if}
 				</div>
 				<div>
 					<label for="target-surfBrightness" class="text-surface-400 block mb-1">Brillance surf.</label>
-					<Input id="target-surfBrightness" isEditing={appState.isEditingTarget} class="form-input" value={fieldValue('surfBrightness')} onchange={setField('surfBrightness')} />
+					{#if appState.isEditingTarget}
+						<Input id="target-surfBrightness" isEditing={appState.isEditingTarget} class="form-input" value={fieldValue('surfBrightness')} onchange={setField('surfBrightness')} />
+					{:else}
+						<span id="target-surfBrightness">{fieldValue('surfBrightness')}</span>
+					{/if}
 				</div>
 				<div>
 					<label for="target-size" class="text-surface-400 block mb-1">Taille</label>
-					<Input id="target-size" isEditing={appState.isEditingTarget} class="form-input" value={fieldValue('size')} onchange={setField('size')} />
+					{#if appState.isEditingTarget}
+						<Input id="target-size" isEditing={appState.isEditingTarget} class="form-input" value={fieldValue('size')} onchange={setField('size')} />
+					{:else}
+						<span id="target-size">{fieldValue('size')}</span>
+					{/if}
 				</div>
 				<div>
 					<label for="target-ra" class="text-surface-400 block mb-1">Coordonnées AD</label>
-					<Input id="target-ra" isEditing={appState.isEditingTarget} class="form-input" value={fieldValue('ra')} onchange={setField('ra')} />
+					{#if appState.isEditingTarget}
+						<Input id="target-ra" isEditing={appState.isEditingTarget} class="form-input" value={fieldValue('ra')} onchange={setField('ra')} />
+					{:else}
+						<span id="target-ra">{fieldValue('ra')}</span>
+					{/if}
 				</div>
 				<div>
 					<label for="target-dec" class="text-surface-400 block mb-1">Coordonnées DEC</label>
-					<Input id="target-dec" isEditing={appState.isEditingTarget} class="form-input" value={fieldValue('dec')} onchange={setField('dec')} />
+					{#if appState.isEditingTarget}
+						<Input id="target-dec" isEditing={appState.isEditingTarget} class="form-input" value={fieldValue('dec')} onchange={setField('dec')} />
+					{:else}
+						<span id="target-dec">{fieldValue('dec')}</span>
+					{/if}
 				</div>
 			</div>
 		</div>

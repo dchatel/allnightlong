@@ -57,7 +57,7 @@
 					{/if}
 
 					<!-- Dégradé pour garantir la lisibilité du texte peu importe l'image -->
-					<div class="absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-transparent"></div>
+					<div class="absolute inset-0 bg-linear-to-t from-black/85 via-black/10 to-transparent"></div>
 
 					<div class="absolute bottom-0 left-0 right-0 p-3">
 						<span class="text-sm font-bold text-white block">{obs.date}</span>
