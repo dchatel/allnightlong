@@ -17,37 +17,41 @@
     }
 </script>
 
-<section class="bg-[#1a1a1d] p-6 rounded-lg border border-[#333] shadow-xl shrink-0">
+<section class="bg-[#1a1a1d] p-6 rounded-lg border border-[#333] shadow-xl shrink-0 flex flex-col gap-5">
+
+	<!-- ================= EN-TÊTE (Pleine largeur) ================= -->
+	<div class="flex justify-between items-center border-b border-[#333] pb-4">
+		<div class="flex items-baseline space-x-4">
+			<Input
+				isEditing={appState.isEditingTarget}
+				class={appState.isEditingTarget ? "form-input text-xl font-bold text-white w-40" : "text-2xl font-black text-white"}
+				value={fieldValue('name')}
+				onchange={setField('name')}
+			/>
+			<Input
+				isEditing={appState.isEditingTarget}
+				class={appState.isEditingTarget ? "form-input text-sm text-surface-400 w-60" : "text-sm text-surface-400 font-semibold"}
+				value={fieldValue('usualName')}
+				onchange={setField('usualName')}
+			/>
+		</div>
+		
+		<div class="flex space-x-2">
+			{#if appState.isEditingTarget}
+				<button onclick={() => appState.saveTarget()} class="btn-primary">Enregistrer</button>
+				<button onclick={() => appState.cancelEditTarget()} class="btn-secondary">Annuler</button>
+				<button onclick={() => appState.deleteTarget()} class="btn-danger">Supprimer</button>
+			{:else}
+				<button onclick={() => appState.startEditTarget()} class="btn-secondary text-xs">Modifier la cible</button>
+			{/if}
+		</div>
+	</div>
+
+	<!-- ================= CORPS (2 Colonnes) ================= -->
 	<div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
 		
-		<!-- Texte -->
-		<div class="lg:col-span-9 space-y-4">
-			<div class="flex justify-between items-center border-b border-[#333] pb-3">
-				<div class="flex items-baseline space-x-4">
-					<Input
-						isEditing={appState.isEditingTarget}
-						class={appState.isEditingTarget ? "form-input text-xl font-bold text-white w-40" : "text-2xl font-black text-white"}
-						value={fieldValue('name')}
-						onchange={setField('name')}
-					/>
-					<Input
-						isEditing={appState.isEditingTarget}
-						class={appState.isEditingTarget ? "form-input text-sm text-surface-400 w-60" : "text-sm text-surface-400 font-semibold"}
-						value={fieldValue('usualName')}
-						onchange={setField('usualName')}
-					/>
-				</div>
-				
-				<div class="flex space-x-2">
-					{#if appState.isEditingTarget}
-						<button onclick={() => appState.saveTarget()} class="btn-primary">Enregistrer</button>
-						<button onclick={() => appState.cancelEditTarget()} class="btn-secondary">Annuler</button>
-						<button onclick={() => appState.deleteTarget()} class="btn-danger">Supprimer</button>
-					{:else}
-						<button onclick={() => appState.startEditTarget()} class="btn-secondary text-xs">Modifier la cible</button>
-					{/if}
-				</div>
-			</div>
+		<!-- Colonne de gauche : Détails et Notes -->
+		<div class="lg:col-span-9 space-y-5">
 
 			<div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
 				<div>
@@ -114,6 +118,28 @@
 						<span id="target-dec">{fieldValue('dec')}</span>
 					{/if}
 				</div>
+			</div>
+
+			<div>
+				<label for="target-notes" class="text-surface-400 block mb-1 text-xs">Notes / Description libre</label>
+				{#if appState.isEditingTarget}
+					<textarea 
+						id="target-notes" 
+						class="w-full form-input rounded p-2 text-white text-sm focus:outline-none focus:border-primary-500 resize-y min-h-24"
+						value={fieldValue('notes')}
+						oninput={(e) => setField('notes')(e.currentTarget.value)}
+						placeholder="Ajoutez vos notes personnelles sur cette cible..."
+					></textarea>
+				{:else}
+					<!-- En mode lecture, 'whitespace-pre-wrap' permet de respecter les sauts de ligne -->
+					<div id="target-notes" class="text-sm whitespace-pre-wrap p-3 min-h-12">
+						{#if fieldValue('notes')}
+							{fieldValue('notes')}
+						{:else}
+							<em class="text-surface-500">Aucune note.</em>
+						{/if}
+					</div>
+				{/if}
 			</div>
 		</div>
 
