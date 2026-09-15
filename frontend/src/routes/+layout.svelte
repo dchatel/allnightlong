@@ -10,6 +10,8 @@
 	import TitleBar from '$lib/components/TitleBar.svelte';
 	import { Command } from '@tauri-apps/plugin-shell';
 
+	import { appState } from '$lib/state.svelte';
+
 	let { children } = $props();
 
   	const appWindow = getCurrentWindow();
@@ -59,6 +61,8 @@
 				console.log("Mode développement : le backend doit être démarré manuellement.");
 			}
 
+			await appState.waitForBackend();
+
 			// Gérer le resize de la fenêtre
 			try {
 				isMaximized = await appWindow.isMaximized();
@@ -100,7 +104,20 @@
 		<TitleBar {isMaximized} />
 		
 		<main class="flex-1 overflow-y-auto p-4 relative">
-			{@render children()}
+			{#if !appState.isBackendReady}
+				<!-- ÉCRAN DE CHARGEMENT PENDANT L'EXTRACTION PYTHON -->
+				<div class="absolute inset-0 flex flex-col items-center justify-center bg-[#121214] z-50">
+					<span class="text-6xl mb-6 animate-bounce">🔭</span>
+					<h2 class="text-xl font-bold text-white tracking-[0.2em] font-['Orbitron'] mb-2 uppercase">AwakeTonight</h2>
+					<div class="flex items-center space-x-2 text-surface-400 text-xs tracking-widest uppercase font-bold animate-pulse">
+						<span class="w-2 h-2 rounded-full bg-indigo-500"></span>
+						<span>Allumage des instruments...</span>
+					</div>
+				</div>
+			{:else}
+				<!-- L'INTERFACE PRINCIPALE -->
+				{@render children()}
+			{/if}
 		</main>
 	</div>
 </div>

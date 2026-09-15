@@ -184,6 +184,10 @@ init_db()
 
 # ================= ENDPOINTS API (FastAPI) =================
 
+@app.get("/api/status")
+def get_status():
+    return {"status": "ready"}
+
 @app.post("/api/shutdown")
 def shutdown_server(background_tasks: BackgroundTasks):
     background_tasks.add_task(self_terminate)

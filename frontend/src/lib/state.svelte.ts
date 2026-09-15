@@ -5,6 +5,8 @@ import { slide, fade } from 'svelte/transition';
 const API_URL = "http://127.0.0.1:8000/api";
 
 class AppState {
+	isBackendReady = $state(false);
+
 	// --- TABLES DE DONNÉES RÉACTIVES ---
 	targets = $state<any[]>([]);
 	observations = $state<any[]>([]);
@@ -23,8 +25,22 @@ class AppState {
 	observationForm = $state<any>({});
 
 	constructor() {
-		// Charger les cibles célestes au démarrage de l'application
-		this.loadTargets();
+	}
+
+	async waitForBackend() {
+		while (!this.isBackendReady) {
+			try {
+				const res = await fetch(`${API_URL}/status`);
+				if (res.ok) {
+					console.log("Backend is ready.");
+					await this.loadTargets();
+					this.isBackendReady = true;
+					break;
+				}
+			} catch (e) {
+			}
+			await new Promise(resolve => setTimeout(resolve, 200));
+		}
 	}
 
 	// --- ÉTATS DÉRIVÉS RÉACTIFS ---
