@@ -5,6 +5,7 @@ import socket
 import sqlite3
 import sys
 import threading
+from datetime import datetime
 from typing import List, Optional
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -118,7 +119,35 @@ class ObservationSchema(BaseModel):
     imageProcessed: str = ""
 
 
+class ExportRequest(BaseModel):
+    path: str
+
+
+# ================= SAUVEGARDES =================
+def backup_db(destination: str):
+    # Fichier temporaire : une copie interrompue n'abîme jamais une sauvegarde existante
+    temp_path = f"{destination}.tmp"
+    source = sqlite3.connect(DB_PATH)
+    target = sqlite3.connect(temp_path)
+    try:
+        source.backup(target)
+    finally:
+        target.close()
+        source.close()
+    os.replace(temp_path, destination)
+
+def backup_before_migration(version: int):
+    backup_dir = Path(DB_PATH).parent / "backups"
+    backup_dir.mkdir(exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    destination = backup_dir / f"allnightlong-v{version}-{timestamp}.db"
+    backup_db(str(destination))
+    print(f"Sauvegarde avant migration : {destination}")
+
+
 # ================= INITIALISATION & MIGRATIONS =================
+LATEST_SCHEMA_VERSION = 2
+
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -129,6 +158,10 @@ def init_db():
     cursor.execute("SELECT version FROM schema_version")
     row = cursor.fetchone()
     current_version = row[0] if row else 0
+
+    # Sans sauvegarde réussie, l'exception interrompt le démarrage avant toute migration
+    if 0 < current_version < LATEST_SCHEMA_VERSION:
+        backup_before_migration(current_version)
 
     if current_version == 0:
         # Initialiser au moment de l'enregistrement de la version
@@ -223,6 +256,14 @@ def get_status():
 def shutdown_server(background_tasks: BackgroundTasks):
     background_tasks.add_task(self_terminate)
     return {"status": "shutdown scheduled"}
+
+@app.post("/api/export")
+def export_database(request: ExportRequest):
+    try:
+        backup_db(request.path)
+    except (OSError, sqlite3.Error) as err:
+        raise HTTPException(status_code=500, detail=str(err))
+    return {"status": "success"}
 
 @app.get("/api/targets", response_model=List[TargetSchema])
 def get_targets():

@@ -1,6 +1,7 @@
 // src/lib/state.svelte.ts
 import { dev } from '$app/environment';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { message, save } from '@tauri-apps/plugin-dialog';
 import { slide, fade } from 'svelte/transition';
 
 // En production, le port est annoncé par le backend à son démarrage
@@ -107,6 +108,32 @@ class AppState {
 
 		const appWindow = getCurrentWindow();
 		await appWindow.close();
+	}
+
+	async exportDatabase() {
+		const path = await save({
+			title: 'Exporter la base de données',
+			defaultPath: `allnightlong-${new Date().toISOString().split('T')[0]}.db`,
+			filters: [{ name: 'Base AllNightLong', extensions: ['db'] }]
+		});
+		if (!path) return;
+
+		try {
+			const res = await apiFetch('/export', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ path })
+			});
+			if (!res.ok) throw new Error((await res.json()).detail);
+
+			await message(
+				"Vos cibles et observations sont sauvegardées.\n\nLes images ne sont pas incluses : la base ne contient que leur emplacement sur le disque.",
+				{ title: 'Export terminé', kind: 'info' }
+			);
+		} catch (err) {
+			console.error("Erreur export base:", err);
+			await message(`L'export a échoué :\n\n${err}`, { title: "Erreur d'export", kind: 'error' });
+		}
 	}
 
 	async loadTargets() {
