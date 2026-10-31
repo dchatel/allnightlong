@@ -50,21 +50,23 @@
 						env: { ALLNIGHTLONG_TOKEN: backendToken }
 					});
 					command.stdout.on('data', (line) => appState.readBackendOutput(line));
+					command.stderr.on('data', (line) => appState.logBackendOutput(line));
+					command.on('error', (error) => appState.logBackendOutput(error));
+					command.on('close', ({ code }) => {
+						appState.backendFailed(`Le serveur local s'est arrêté (code ${code}).`);
+					});
 					pythonChild = await command.spawn();
 					console.log("Backend démarré avec PID:", pythonChild.pid);
 				} catch (error) {
 					console.error("Impossible de démarrer le backend:", error);
-					// S'il y a un échec, on l'affiche dans un vrai pop-up Windows [1.1.2]
-					await message(
-						`Erreur lors du démarrage du binaire Python :\n\n${error}`, 
-						{ title: 'Erreur Système Backend', kind: 'error' }
-					);
+					appState.backendFailed(`Impossible de lancer le serveur local : ${error}`);
 				}
 			} else {
 				console.log("Mode développement : le backend doit être démarré manuellement.");
 			}
 
-			await appState.waitForBackend();
+			// Sans await : une mise à jour doit rester possible même si le backend ne démarre pas
+			appState.waitForBackend();
 
 			// Gérer le resize de la fenêtre
 			try {
@@ -107,7 +109,17 @@
 		<TitleBar {isMaximized} />
 		
 		<main class="flex-1 overflow-y-auto p-4 relative">
-			{#if !appState.isBackendReady}
+			{#if appState.backendError && !appState.isBackendReady}
+				<!-- ÉCHEC DU DÉMARRAGE : ces lignes permettent un diagnostic à distance -->
+				<div class="absolute inset-0 flex flex-col justify-center gap-3 bg-[#121214] z-50 p-8 text-white">
+					<h2 class="text-xl font-bold">L'application n'a pas pu démarrer</h2>
+					<p class="text-sm text-surface-300 break-words">{appState.backendError}</p>
+					<p class="text-sm text-surface-300">Faites une capture de cet écran pour obtenir de l'aide.</p>
+					{#if appState.backendLog.length > 0}
+						<pre class="text-xs text-surface-400 bg-black/40 rounded p-3 overflow-auto max-h-64 whitespace-pre-wrap break-all select-text">{appState.backendLog.join('\n')}</pre>
+					{/if}
+				</div>
+			{:else if !appState.isBackendReady}
 				<!-- ÉCRAN DE CHARGEMENT PENDANT L'EXTRACTION PYTHON -->
 				<div class="absolute inset-0 flex flex-col items-center justify-center bg-[#121214] z-50">
 					<span class="text-6xl mb-6 animate-bounce">🔭</span>
