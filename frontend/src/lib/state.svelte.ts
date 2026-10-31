@@ -1,6 +1,7 @@
 // src/lib/state.svelte.ts
 import { dev } from '$app/environment';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { message } from '@tauri-apps/plugin-dialog';
 import { slide, fade } from 'svelte/transition';
 
 // En production, le port est annoncé par le backend à son démarrage
@@ -11,11 +12,30 @@ export const backendToken = Array.from(crypto.getRandomValues(new Uint8Array(32)
 	.map(byte => byte.toString(16).padStart(2, '0'))
 	.join('');
 
-function apiFetch(path: string, init: RequestInit = {}) {
-	return fetch(`${apiUrl}${path}`, {
+// FastAPI renvoie { detail: "..." } ou, pour une donnée refusée, la liste des champs en cause
+async function readApiError(res: Response) {
+	const detail = (await res.json().catch(() => null))?.detail;
+	if (Array.isArray(detail)) {
+		return `Valeur invalide : ${detail.map(error => error.loc.at(-1)).join(', ')}`;
+	}
+	return detail || `Erreur du serveur (${res.status})`;
+}
+
+// Lève une erreur si la requête échoue : le code qui suit un appel peut se fier à la réponse
+async function apiFetch(path: string, init: RequestInit = {}) {
+	const res = await fetch(`${apiUrl}${path}`, {
 		...init,
 		headers: { ...init.headers, Authorization: `Bearer ${backendToken}` }
 	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res;
+}
+
+async function showApiError(title: string, err: unknown) {
+	console.error(`${title}:`, err);
+	// fetch lève une TypeError quand le serveur est injoignable
+	const reason = err instanceof TypeError ? 'Le serveur local ne répond pas.' : (err as Error).message;
+	await message(reason, { title, kind: 'error' });
 }
 
 class AppState {
@@ -119,7 +139,7 @@ class AppState {
 				this.selectTarget(this.targets[0].id);
 			}
 		} catch (err) {
-			console.error("Erreur chargement cibles depuis l'API:", err);
+			await showApiError('Chargement des cibles impossible', err);
 		}
 	}
 
@@ -128,7 +148,7 @@ class AppState {
 			const res = await apiFetch(`/targets/${targetId}/observations`);
 			this.observations = await res.json();
 		} catch (err) {
-			console.error("Erreur chargement observations depuis l'API:", err);
+			await showApiError('Chargement des observations impossible', err);
 		}
 	}
 
@@ -188,7 +208,7 @@ class AppState {
 			this.selectedTargetId = savedTarget.id;
 			this.isEditingTarget = false;
 		} catch (err) {
-			console.error("Erreur sauvegarde cible:", err);
+			await showApiError('Enregistrement impossible', err);
 		}
 	}
 
@@ -201,7 +221,7 @@ class AppState {
 				this.selectedTargetId = null;
 				await this.loadTargets();
 			} catch (err) {
-				console.error("Erreur suppression cible:", err);
+				await showApiError('Suppression impossible', err);
 			}
 		}
 	}
@@ -356,7 +376,7 @@ class AppState {
 			this.activeObservationId = savedObs.id;
 			this.isEditingObservation = false;
 		} catch (err) {
-			console.error("Erreur sauvegarde observation:", err);
+			await showApiError('Enregistrement impossible', err);
 		}
 	}
 
@@ -370,7 +390,7 @@ class AppState {
 				this.activeObservationId = null;
 				this.isEditingObservation = false;
 			} catch (err) {
-				console.error("Erreur suppression observation:", err);
+				await showApiError('Suppression impossible', err);
 			}
 		}
 	}
