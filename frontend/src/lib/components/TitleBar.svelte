@@ -16,6 +16,10 @@
   <div class="logo">🔭 AwakeTonight</div>
   
   <div class="window-controls">
+    <button class="control-btn" onclick={() => appState.exportDatabase()} title="Exporter la base de données">
+      <svg width="16" height="16" viewBox="0 0 24 24"><path fill="white" d="M13 3h-2v10.17l-3.59-3.58L6 11l6 6l6-6l-1.41-1.41L13 13.17V3zM5 19h14v2H5z"/></svg>
+    </button>
+
     <button class="control-btn" onclick={minimize} title="Réduire">
       <svg width="16" height="16" viewBox="0 0 24 24"><path fill="white" d="M20 14H4v-4h16"/></svg>
     </button>
