@@ -34,6 +34,8 @@ try {
     // Remplace la ligne version = "..." par la nouvelle
     cargo = cargo.replace(/^version\s*=\s*".*"/m, `version = "${newVersion}"`);
     writeFileSync(cargoPath, cargo);
+    // Répercute la nouvelle version dans Cargo.lock, sans toucher aux dépendances
+    execSync('cargo update --workspace --offline', { cwd: './frontend/src-tauri', stdio: 'inherit' });
 
     // 5. Commandes Git automatiques
     console.log(`\n☁️ 4. Envoi sur GitHub...`);
