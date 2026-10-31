@@ -14,6 +14,10 @@ from pydantic import BaseModel
 import platform
 from pathlib import Path
 
+# L'encodage Windows par défaut ferait planter print() sur certains noms d'utilisateur
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 # Vrai uniquement pour le binaire PyInstaller lancé par Tauri (pas en développement)
 IS_SIDECAR = getattr(sys, "frozen", False)
 

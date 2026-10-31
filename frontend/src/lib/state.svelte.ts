@@ -7,6 +7,9 @@ import { slide, fade } from 'svelte/transition';
 // En production, le port est annoncé par le backend à son démarrage
 let apiUrl = dev ? "http://127.0.0.1:8000/api" : "";
 
+const BACKEND_TIMEOUT_MS = 60000;
+const BACKEND_LOG_LINES = 15;
+
 // Jeton unique à ce lancement, transmis au backend au démarrage
 export const backendToken = Array.from(crypto.getRandomValues(new Uint8Array(32)))
 	.map(byte => byte.toString(16).padStart(2, '0'))
@@ -40,6 +43,10 @@ async function showApiError(title: string, err: unknown) {
 
 class AppState {
 	isBackendReady = $state(false);
+	// Motif affiché sur l'écran de démarrage quand le backend ne répond pas
+	backendError = $state('');
+	backendLog = $state<string[]>([]);
+	backendStopped = false;
 
 	// --- TABLES DE DONNÉES RÉACTIVES ---
 	targets = $state<any[]>([]);
@@ -65,10 +72,22 @@ class AppState {
 	readBackendOutput(line: string) {
 		const port = line.match(/^ALLNIGHTLONG_PORT=(\d+)/)?.[1];
 		if (port) apiUrl = `http://127.0.0.1:${port}/api`;
+		this.logBackendOutput(line);
+	}
+
+	logBackendOutput(line: string) {
+		this.backendLog = [...this.backendLog, line.trimEnd()].slice(-BACKEND_LOG_LINES);
+	}
+
+	backendFailed(reason: string) {
+		this.backendStopped = true;
+		this.backendError = reason;
 	}
 
 	async waitForBackend() {
-		while (!this.isBackendReady) {
+		const start = Date.now();
+		let lastError = '';
+		while (!this.isBackendReady && !this.backendStopped) {
 			try {
 				const res = apiUrl ? await apiFetch('/status') : null;
 				if (res?.ok) {
@@ -78,6 +97,11 @@ class AppState {
 					break;
 				}
 			} catch (e) {
+				lastError = String(e);
+			}
+			// Le backend peut encore arriver : un antivirus retarde parfois son lancement
+			if (Date.now() - start > BACKEND_TIMEOUT_MS) {
+				this.backendError = `Le serveur local ne répond toujours pas. ${lastError}`;
 			}
 			await new Promise(resolve => setTimeout(resolve, 200));
 		}
