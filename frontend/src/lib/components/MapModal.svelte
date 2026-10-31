@@ -2,19 +2,58 @@
 	import { appState } from '$lib/state.svelte';
 	import { fade, slide } from 'svelte/transition'; // [3]
 
-	function initAladin(node: HTMLElement) {
-		const A = (window as any).A;
-		if (!A) return;
+	// Miroir ESA du relevé DSS2 couleur : l'appli ne dépend pas des serveurs du CDS pour l'imagerie
+	const DSS_SURVEY_URL = 'https://skies.esac.esa.int/DSSColor/';
 
-		A.init.then(() => {
-			A.aladin(node, {
-				survey: 'P/DSS2/color',
-				target: appState.activeTarget ? appState.activeTarget.name : 'M42',
-				fov: 1.5,
-				showFullscreenControl: false,
-				showLayersControl: true
+	let mapError = $state('');
+
+	// Convertit "05 35 16.47 / 83.81" ou "05h 35m 17s" en valeur décimale (heures ou degrés)
+	function parseSexagesimal(value: string): number | null {
+		const sexagesimal = value.split('/')[0].replace(/,/g, '.');
+		const [first, minutes = 0, seconds = 0] = (sexagesimal.match(/\d+(?:\.\d+)?/g) ?? []).map(Number);
+		if (first === undefined) return null;
+
+		const absolute = first + minutes / 60 + seconds / 3600;
+		return sexagesimal.trim().startsWith('-') ? -absolute : absolute;
+	}
+
+	// Des coordonnées évitent la résolution du nom par Sesame, service uniquement hébergé au CDS
+	function getAladinTarget(target: { name: string; ra: string; dec: string }): string {
+		const raHours = parseSexagesimal(target.ra);
+		const dec = parseSexagesimal(target.dec);
+		if (raHours === null || dec === null) return target.name;
+
+		return `${(raHours * 15).toFixed(6)} ${dec >= 0 ? '+' : ''}${dec.toFixed(6)}`;
+	}
+
+	function initAladin(node: HTMLElement) {
+		let destroyed = false;
+		mapError = '';
+
+		// Import à la demande : ces 2,4 Mo ne doivent pas ralentir le démarrage de l'appli
+		import('aladin-lite')
+			.then(async ({ default: A }) => {
+				await A.init;
+				if (destroyed) return;
+
+				A.aladin(node, {
+					survey: DSS_SURVEY_URL,
+					target: appState.activeTarget ? getAladinTarget(appState.activeTarget) : 'M42',
+					fov: 1.5,
+					showFullscreenControl: false,
+					showLayersControl: true
+				});
+			})
+			.catch((err) => {
+				console.error("Erreur d'initialisation d'Aladin:", err);
+				mapError = "Impossible d'initialiser la carte céleste.";
 			});
-		});
+
+		return {
+			destroy() {
+				destroyed = true;
+			}
+		};
 	}
 </script>
 
@@ -42,7 +81,13 @@
 				</button>
 			</div>
 
-			<div use:initAladin class="flex-1 w-full bg-black"></div>
+			{#if mapError}
+				<div class="flex-1 w-full bg-black flex items-center justify-center text-sm text-surface-400">
+					{mapError}
+				</div>
+			{:else}
+				<div use:initAladin class="flex-1 w-full bg-black"></div>
+			{/if}
 		</div>
 	</div>
 {/if}
