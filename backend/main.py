@@ -1,27 +1,58 @@
+import hmac
 import os
 import signal
+import socket
 import sqlite3
+import sys
+import threading
 from typing import List, Optional
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import platform
 from pathlib import Path
 
+# Vrai uniquement pour le binaire PyInstaller lancé par Tauri (pas en développement)
+IS_SIDECAR = getattr(sys, "frozen", False)
+
+# Jeton généré par l'application à chaque lancement
+API_TOKEN = os.environ.get("ALLNIGHTLONG_TOKEN", "")
+if IS_SIDECAR and not API_TOKEN:
+    sys.exit("ALLNIGHTLONG_TOKEN manquant : démarrage refusé.")
+
 app = FastAPI()
 
-# Configuration CORS pour autoriser l'interface Tauri (localhost:1420 ou tauri://localhost)
+@app.middleware("http")
+async def require_token(request: Request, call_next):
+    if API_TOKEN:
+        authorization = request.headers.get("authorization", "")
+        if not hmac.compare_digest(authorization.encode(), f"Bearer {API_TOKEN}".encode()):
+            return JSONResponse({"detail": "Non autorisé"}, status_code=401)
+    return await call_next(request)
+
+# Configuration CORS : seule l'interface Tauri peut appeler l'API depuis un navigateur.
+# Ajouté après require_token pour traiter les requêtes de pré-vérification en premier.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=[
+        "tauri://localhost",        # macOS / Linux
+        "http://tauri.localhost",   # Windows
+        "http://localhost:5173",    # Développement
+    ],
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 def self_terminate():
     os.kill(os.getpid(), signal.SIGTERM)
-    
+
+# Tauri garde stdin ouvert : sa fermeture signifie que l'application n'existe plus
+def exit_when_parent_dies():
+    sys.stdin.read()
+    os._exit(0)
+
+
 def get_db_path() -> str:
     app_name = "allnightlong"
     system = platform.system()
@@ -304,5 +335,15 @@ def delete_observation(obs_id: int):
 
 if __name__ == "__main__":
     import uvicorn
-    # Démarre le serveur web FastAPI sur le port 8000
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+
+    if IS_SIDECAR:
+        threading.Thread(target=exit_when_parent_dies, daemon=True).start()
+
+        # Port libre choisi par le système et communiqué à l'application via stdout
+        server_socket = socket.socket()
+        server_socket.bind(("127.0.0.1", 0))
+        print(f"ALLNIGHTLONG_PORT={server_socket.getsockname()[1]}", flush=True)
+        uvicorn.Server(uvicorn.Config(app)).run(sockets=[server_socket])
+    else:
+        # Développement : démarre le serveur web FastAPI sur le port 8000
+        uvicorn.run(app, host="127.0.0.1", port=8000)

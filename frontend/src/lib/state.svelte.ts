@@ -1,8 +1,22 @@
 // src/lib/state.svelte.ts
+import { dev } from '$app/environment';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { slide, fade } from 'svelte/transition';
 
-const API_URL = "http://127.0.0.1:8000/api";
+// En production, le port est annoncé par le backend à son démarrage
+let apiUrl = dev ? "http://127.0.0.1:8000/api" : "";
+
+// Jeton unique à ce lancement, transmis au backend au démarrage
+export const backendToken = Array.from(crypto.getRandomValues(new Uint8Array(32)))
+	.map(byte => byte.toString(16).padStart(2, '0'))
+	.join('');
+
+function apiFetch(path: string, init: RequestInit = {}) {
+	return fetch(`${apiUrl}${path}`, {
+		...init,
+		headers: { ...init.headers, Authorization: `Bearer ${backendToken}` }
+	});
+}
 
 class AppState {
 	isBackendReady = $state(false);
@@ -27,11 +41,17 @@ class AppState {
 	constructor() {
 	}
 
+	// Lit la ligne "ALLNIGHTLONG_PORT=..." écrite par le backend sur stdout
+	readBackendOutput(line: string) {
+		const port = line.match(/^ALLNIGHTLONG_PORT=(\d+)/)?.[1];
+		if (port) apiUrl = `http://127.0.0.1:${port}/api`;
+	}
+
 	async waitForBackend() {
 		while (!this.isBackendReady) {
 			try {
-				const res = await fetch(`${API_URL}/status`);
-				if (res.ok) {
+				const res = apiUrl ? await apiFetch('/status') : null;
+				if (res?.ok) {
 					console.log("Backend is ready.");
 					await this.loadTargets();
 					this.isBackendReady = true;
@@ -80,7 +100,7 @@ class AppState {
 
 	async closeApp(){
 		try {
-			await fetch(`${API_URL}/shutdown`, { method: 'POST' });
+			await apiFetch('/shutdown', { method: 'POST' });
 		} catch (err) {
 			console.log("Déconnexion attendue lors du shutdown.");
 		}
@@ -91,7 +111,7 @@ class AppState {
 
 	async loadTargets() {
 		try {
-			const res = await fetch(`${API_URL}/targets`);
+			const res = await apiFetch('/targets');
 			this.targets = await res.json();
 			
 			// Sélectionner automatiquement le premier élément s'il y en a un
@@ -105,7 +125,7 @@ class AppState {
 
 	async loadObservations(targetId: number) {
 		try {
-			const res = await fetch(`${API_URL}/targets/${targetId}/observations`);
+			const res = await apiFetch(`/targets/${targetId}/observations`);
 			this.observations = await res.json();
 		} catch (err) {
 			console.error("Erreur chargement observations depuis l'API:", err);
@@ -141,7 +161,7 @@ class AppState {
 				delete targetToSave.id;
 			}
 
-			const res = await fetch(`${API_URL}/targets`, {
+			const res = await apiFetch('/targets', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(targetToSave)
@@ -177,7 +197,7 @@ class AppState {
 		const confirmDelete = confirm("Supprimer définitivement cet objet céleste et toutes ses observations ?");
 		if (confirmDelete) {
 			try {
-				await fetch(`${API_URL}/targets/${this.selectedTargetId}`, { method: 'DELETE' });
+				await apiFetch(`/targets/${this.selectedTargetId}`, { method: 'DELETE' });
 				this.selectedTargetId = null;
 				await this.loadTargets();
 			} catch (err) {
@@ -312,7 +332,7 @@ class AppState {
 				delete obsToSave.id;
 			}
 
-			const res = await fetch(`${API_URL}/observations`, {
+			const res = await apiFetch('/observations', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(obsToSave)
@@ -345,7 +365,7 @@ class AppState {
 		const confirmDelete = confirm("Supprimer définitivement ce rapport d'observation ?");
 		if (confirmDelete) {
 			try {
-				await fetch(`${API_URL}/observations/${this.activeObservationId}`, { method: 'DELETE' });
+				await apiFetch(`/observations/${this.activeObservationId}`, { method: 'DELETE' });
 				this.observations = this.observations.filter(o => o.id !== this.activeObservationId);
 				this.activeObservationId = null;
 				this.isEditingObservation = false;

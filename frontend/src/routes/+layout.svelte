@@ -10,7 +10,7 @@
 	import TitleBar from '$lib/components/TitleBar.svelte';
 	import { Command } from '@tauri-apps/plugin-shell';
 
-	import { appState } from '$lib/state.svelte';
+	import { appState, backendToken } from '$lib/state.svelte';
 
 	let { children } = $props();
 
@@ -46,7 +46,10 @@
 			// Démarrer le backend Python
 			if(!dev) {
 				try {
-					const command = Command.sidecar("bin/allnightlong-backend");
+					const command = Command.sidecar("bin/allnightlong-backend", [], {
+						env: { ALLNIGHTLONG_TOKEN: backendToken }
+					});
+					command.stdout.on('data', (line) => appState.readBackendOutput(line));
 					pythonChild = await command.spawn();
 					console.log("Backend démarré avec PID:", pythonChild.pid);
 				} catch (error) {
