@@ -75,8 +75,9 @@
 	</div>
 
 	<!-- Image étirable -->
-	<div class="lg:col-span-3 relative h-52 flex flex-col overflow-hidden rounded-lg">
+	<div class="lg:col-span-3 h-60">
 		<ImagePicker
+			fill
 			title="Image de référence"
 			imageUrl={values.imageRef}
 			onchange={(v: string) => onfield('imageRef', v)}

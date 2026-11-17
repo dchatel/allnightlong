@@ -172,8 +172,9 @@
 							<!-- SESSION -->
 							<div class="space-y-4 bg-[#1e1e21] p-4 rounded-lg border border-[#333]">
 								<span class="text-[10px] uppercase font-bold text-surface-400 block border-b border-[#333] pb-1.5">1. Session</span>
-								<div class="grid grid-cols-[minmax(0,1fr)_6.5rem] gap-2">
-									<div>
+								<!-- Lieu et Début calés à gauche, Bortle et Fin calés à droite -->
+								<div class="flex justify-between gap-3">
+									<div class="flex-1 min-w-0">
 										<label for="obs-location" class="block text-[10px] text-surface-400 mb-1">Lieu</label>
 										{#if appState.isEditingObservation}
 											<div class="flex gap-1">
@@ -205,7 +206,7 @@
 											<span id="obs-location" class="block text-sm text-white">{appState.locationText(obs) || '—'}</span>
 										{/if}
 									</div>
-									<div>
+									<div class="w-28 shrink-0 text-right">
 										<label for="obs-bortle" class="block text-[10px] text-surface-400 mb-1">Bortle (nuit)</label>
 										{#if appState.isEditingObservation}
 											<input
@@ -224,8 +225,8 @@
 										{/if}
 									</div>
 								</div>
-								<div class="grid grid-cols-2 gap-2">
-									<div>
+								<div class="flex justify-between gap-3">
+									<div class="session-date">
 										<label for="obs-start" class="block text-[10px] text-surface-400 mb-1">Début (TU)</label>
 										{#if appState.isEditingObservation}
 											<input id="obs-start" type="datetime-local" class="form-input px-1.5" value={toInput(fieldValue('start'))} oninput={(e) => setStart(e.currentTarget.value)} />
@@ -233,7 +234,7 @@
 											<span id="obs-start" class="block text-sm text-white">{formatDateTime(fieldValue('start')) || '—'}</span>
 										{/if}
 									</div>
-									<div>
+									<div class="session-date text-right">
 										<label for="obs-end" class="block text-[10px] text-surface-400 mb-1">Fin (TU)</label>
 										{#if appState.isEditingObservation}
 											<input id="obs-end" type="datetime-local" class="form-input px-1.5" value={toInput(fieldValue('end'))} oninput={(e) => setField('end')(e.currentTarget.value.replace('T', ' '))} />
@@ -318,12 +319,11 @@
 												<option value={NEW_TARGET}>+ Nouvelle cible…</option>
 											</select>
 											{#if target}
-												<button type="button" title="Voir la fiche de la cible" onclick={() => appState.openTargetSheet(target.id)} class="btn-secondary text-xs px-2">ⓘ</button>
+												<button type="button" title="Voir la fiche de la cible" onclick={() => appState.openTargetSheet(target.id)} class="btn-secondary px-2 flex items-center">
+													<svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 10.5v6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="7.3" r="1.3" fill="currentColor"/></svg>
+												</button>
 											{/if}
 											</div>
-											{#if target}
-												<span class="block text-[10px] text-surface-500 truncate mt-0.5">{targetSummary(target)}</span>
-											{/if}
 										</div>
 										<input type="text" class="form-input" bind:value={row.altitude} />
 										<input type="number" min="0" class="form-input px-1" bind:value={row.imgGood} />
@@ -331,6 +331,10 @@
 										<input type="number" min="0" class="form-input px-1" bind:value={row.imgBad} />
 										<span class="text-sm text-surface-300">{duration(row)}</span>
 										<button type="button" title="Retirer cette cible" onclick={() => removeTarget(i)} class="text-red-400 hover:text-red-300 px-1">✕</button>
+										<!-- Rappel de la cible sur sa propre ligne : la ligne des champs reste alignée -->
+										{#if target}
+											<span class="col-span-7 -mt-0.5 text-[10px] text-surface-500 truncate">{targetSummary(target)}</span>
+										{/if}
 										<input
 											type="text"
 											class="form-input col-span-6 mb-2"
@@ -417,3 +421,11 @@
 		</div>
 	</div>
 {/if}
+
+<style>
+	/* Largeur commune du début et de la fin : une date + heure a toujours la même longueur */
+	.session-date {
+		width: 11.5rem;
+		flex-shrink: 0;
+	}
+</style>
