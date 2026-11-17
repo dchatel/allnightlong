@@ -11,6 +11,7 @@
 	import LocationModal from '$lib/components/LocationModal.svelte';
 	import ObservationBoard from '$lib/components/ObservationBoard.svelte';
 	import TargetSheetModal from '$lib/components/TargetSheetModal.svelte';
+	import SettingsModal from '$lib/components/SettingsModal.svelte';
 </script>
 
 <div class="flex h-full w-full bg-[#121214] overflow-hidden">
@@ -54,3 +55,4 @@
 <ObservationDetail />
 <LocationModal />
 <TargetSheetModal />
+<SettingsModal />

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { appState, parseLegacyCoords, emptyObservationTarget, formatDate, formatDateTime, type ObservationTarget } from '$lib/state.svelte';
 	import { fade, slide } from 'svelte/transition';
-	import ImagePicker from '$lib/components/ImagePicker.svelte';
+	import ImageGallery from '$lib/components/ImageGallery.svelte';
 
 	let obs = $derived(appState.activeObservation);
 
@@ -16,6 +16,18 @@
 	}
 
 	let rows = $derived<ObservationTarget[]>(fieldValue('targets') ?? []);
+
+	// Cible dont la galerie montre les images (null = toutes) ; remise à zéro à chaque rapport
+	let filterTargetId = $state<number | null>(null);
+	$effect(() => {
+		appState.activeObservationId;
+		filterTargetId = null;
+	});
+
+	function imageCount(targetId: number | null) {
+		// Même règle que le filtre de la galerie : ses images et celles du champ entier
+		return (fieldValue('images') ?? []).filter((i: any) => i.targetIds.length === 0 || i.targetIds.includes(targetId)).length;
+	}
 
 	// --- LIEU ---
 	const NEW_LOCATION = 'new';
@@ -286,7 +298,7 @@
 								<span class="text-[10px] text-yellow-500">Pass</span>
 								<span class="text-[10px] text-red-500">Bad</span>
 								<span class="text-[10px] text-surface-400" title="Poses retenues × pose individuelle">Durée retenue</span>
-								<span></span>
+								<span class="text-[10px] text-surface-400">{appState.isEditingObservation ? '' : 'Images'}</span>
 
 								{#each rows as row, i (i)}
 									{@const target = appState.targets.find(t => t.id === row.targetId)}
@@ -355,7 +367,12 @@
 											{/if}
 										</div>
 										<span class="text-sm text-white">{duration(row)}</span>
-										<span></span>
+										<button
+											type="button"
+											title="Afficher les images de cette cible"
+											onclick={() => (filterTargetId = filterTargetId === row.targetId ? null : row.targetId)}
+											class="text-xs px-2 py-0.5 rounded-full border transition-colors {filterTargetId === row.targetId ? 'bg-indigo-500 border-indigo-500 text-white font-bold' : 'border-[#333] text-surface-300 hover:border-indigo-500'}"
+										>🖼 {imageCount(row.targetId)}</button>
 										{#if row.notes}
 											<p class="col-span-7 text-xs text-surface-300 whitespace-pre-wrap -mt-0.5 mb-1.5">Note : {row.notes}</p>
 										{/if}
@@ -381,24 +398,14 @@
 					</div>
 
 					<!-- Images -->
-					<div class="xl:col-span-4 space-y-4">
-						<div class="h-64 flex flex-col">
-							<ImagePicker
-								title="Image Brute (Seestar)"
-								imageUrl={fieldValue('imageRaw')}
-								onchange={setField('imageRaw')}
-								isEditing={appState.isEditingObservation}
-							/>
-						</div>
-
-						<div class="h-64 flex flex-col">
-							<ImagePicker
-								title="Image finale traitée"
-								imageUrl={fieldValue('imageProcessed')}
-								onchange={setField('imageProcessed')}
-								isEditing={appState.isEditingObservation}
-							/>
-						</div>
+					<div class="xl:col-span-4">
+						<ImageGallery
+							images={fieldValue('images') ?? []}
+							{rows}
+							isEditing={appState.isEditingObservation}
+							setImages={(images) => (appState.observationForm.images = images)}
+							bind:filterTargetId
+						/>
 					</div>
 
 				</div>
