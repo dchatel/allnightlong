@@ -4,11 +4,15 @@
 	import { open } from '@tauri-apps/plugin-dialog';
 
 	let imagesFolder = $state('');
+	let weatherMarginHours = $state(1);
 	let saving = $state(false);
 
 	// Copie de travail à chaque ouverture
 	$effect(() => {
-		if (appState.showSettings) imagesFolder = appState.settings.imagesFolder;
+		if (appState.showSettings) {
+			imagesFolder = appState.settings.imagesFolder;
+			weatherMarginHours = appState.settings.weatherMarginHours;
+		}
 	});
 
 	async function browse() {
@@ -23,7 +27,7 @@
 
 	async function save() {
 		saving = true;
-		await appState.saveSettings({ imagesFolder: imagesFolder.trim() });
+		await appState.saveSettings({ imagesFolder: imagesFolder.trim(), weatherMarginHours: Number(weatherMarginHours) });
 		saving = false;
 	}
 
@@ -68,6 +72,22 @@
 						Les images ne sont jamais copiées. Celles qui se trouvent dans ce dossier sont enregistrées par leur
 						emplacement <em>à l'intérieur</em> du dossier : si le dossier change de place ou de lettre de disque
 						(E: devient F:), il suffit de modifier ce réglage pour que toutes les images se retrouvent.
+					</p>
+				</section>
+
+				<section class="bg-[#1e1e21] p-4 rounded-lg border border-[#333] space-y-3">
+					<span class="text-[10px] uppercase font-bold text-surface-400 block border-b border-[#333] pb-1.5">Météo</span>
+					<div class="flex items-center gap-3">
+						<label for="settings-weather-margin" class="text-xs text-white font-bold">Marge autour du créneau</label>
+						<select id="settings-weather-margin" class="form-input" style="width: 6rem" bind:value={weatherMarginHours}>
+							{#each [0, 1, 2, 3, 4, 5, 6] as hours (hours)}
+								<option value={hours}>{hours} h</option>
+							{/each}
+						</select>
+					</div>
+					<p class="text-[11px] text-surface-400 leading-relaxed">
+						La météo est récupérée sur Open-Meteo pour le créneau des observations de la nuit, élargi de cette marge
+						avant et après. Les valeurs saisies ou corrigées à la main ne sont jamais écrasées.
 					</p>
 				</section>
 			</div>

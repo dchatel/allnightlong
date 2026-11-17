@@ -2,6 +2,7 @@
 	import { appState, parseLegacyCoords, emptyObservationTarget, formatDate, formatDateTime, type ObservationTarget } from '$lib/state.svelte';
 	import { fade, slide } from 'svelte/transition';
 	import ImageGallery from '$lib/components/ImageGallery.svelte';
+	import WeatherReadings from '$lib/components/WeatherReadings.svelte';
 
 	let obs = $derived(appState.activeObservation);
 
@@ -387,14 +388,17 @@
 						</div>
 
 						<!-- NOTES DE SÉANCE -->
-						<div class="flex-1 flex flex-col min-h-0">
+						<div class="flex flex-col">
 							<label for="obs-notes" class="block text-xs text-surface-400 mb-1 shrink-0">Notes de la séance</label>
 							{#if appState.isEditingObservation}
-								<textarea id="obs-notes" class="form-input flex-1 min-h-24 resize-none py-2" value={fieldValue('notes')} oninput={(e) => setField('notes')(e.currentTarget.value)}></textarea>
+								<textarea id="obs-notes" class="form-input min-h-40 resize-y py-2" value={fieldValue('notes')} oninput={(e) => setField('notes')(e.currentTarget.value)}></textarea>
 							{:else}
-								<p id="obs-notes" class="text-sm text-white whitespace-pre-wrap flex-1 overflow-y-auto min-h-12">{fieldValue('notes') || '—'}</p>
+								<p id="obs-notes" class="text-sm text-white whitespace-pre-wrap min-h-12">{fieldValue('notes') || '—'}</p>
 							{/if}
 						</div>
+
+						<!-- CONDITIONS DE LA NUIT (session) -->
+						<WeatherReadings sessionId={obs.sessionId} />
 					</div>
 
 					<!-- Images -->
