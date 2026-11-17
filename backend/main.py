@@ -135,11 +135,30 @@ class ObservationSchema(BaseModel):
     subExposure: str = ""
     imgTotal: int = 0
     notes: str = ""
-    imageRaw: str = ""
-    imageProcessed: str = ""
     # Lieu saisi en texte libre avant les lieux enregistrés, conservé jusqu'à sa conversion
     legacyLocation: str = ""
     targets: List[ObservationTargetSchema] = []
+    images: List["ObservationImageSchema"] = []
+
+# Une image d'une observation. "path" est toujours un chemin complet côté API ;
+# en base, il est relatif au dossier des images quand l'image s'y trouve.
+class ObservationImageSchema(BaseModel):
+    id: Optional[int] = None
+    path: str
+    kind: str = "traitée"
+    software: str = ""
+    palette: str = ""
+    caption: str = ""
+    isFavorite: bool = False
+    # Cibles visibles sur l'image ; aucune = champ entier
+    targetIds: List[int] = []
+    # Calculé à la lecture : le fichier n'existe pas (disque débranché, dossier déplacé…)
+    missing: bool = False
+
+class SettingsSchema(BaseModel):
+    imagesFolder: str = ""
+
+ObservationSchema.model_rebuild()
 
 class LocationSchema(BaseModel):
     id: Optional[int] = None
@@ -220,8 +239,49 @@ def delete_empty_sessions(cursor):
     cursor.execute("DELETE FROM sessions WHERE id NOT IN (SELECT session_id FROM observations WHERE session_id IS NOT NULL)")
 
 
+# ================= RÉGLAGES ET CHEMINS D'IMAGES =================
+def read_setting(conn, key: str, default: str = "") -> str:
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row[0] if row else default
+
+def images_folder(conn) -> str:
+    return read_setting(conn, "images_folder")
+
+def is_web_url(path: str) -> bool:
+    return path.startswith(("http://", "https://"))
+
+def to_stored_path(path: str, folder: str) -> str:
+    """Chemin enregistré : relatif au dossier des images quand l'image s'y trouve, complet sinon."""
+    if not path or is_web_url(path) or not folder or not os.path.isabs(path):
+        return path
+    try:
+        relative = os.path.relpath(path, folder)
+    except ValueError:  # autre lecteur
+        return path
+    return path if relative.startswith("..") else relative
+
+def to_full_path(path: str, folder: str) -> str:
+    if not path or is_web_url(path) or os.path.isabs(path) or not folder:
+        return path
+    return os.path.join(folder, path)
+
+def file_missing(full_path: str) -> bool:
+    return bool(full_path) and not is_web_url(full_path) and not os.path.isfile(full_path)
+
+
+# Classement des anciennes images d'après leur nom de fichier (migration v5)
+def guess_image_details(path: str):
+    name = os.path.basename(path).lower()
+    stem = os.path.splitext(name)[0]
+    kind = "astrométrie" if "astrom" in name else "traitée"
+    software = "Siril" if "siril" in name else "Stacking Wizard" if "wizard" in name else ""
+    palette = "Dual band" if "duoband" in name else "Naturelle" if "natur" in name else "RVB" if "rgb" in name else ""
+    caption = "Finition Photoshop" if stem.rstrip("()0123456789").endswith("ps") else ""
+    return kind, software, palette, caption
+
+
 # ================= INITIALISATION & MIGRATIONS =================
-LATEST_SCHEMA_VERSION = 4
+LATEST_SCHEMA_VERSION = 5
 
 def migrate_to_v4(conn):
     # Reconstruction de la table observations : SQLite ne sait pas retirer une clé étrangère.
@@ -298,6 +358,58 @@ def migrate_to_v4(conn):
     cursor.execute("UPDATE schema_version SET version = 4")
     conn.commit()
     conn.execute("PRAGMA foreign_keys = ON;")
+
+
+def migrate_to_v5(conn):
+    cursor = conn.cursor()
+    cursor.execute("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)")
+    cursor.execute("""
+        CREATE TABLE observation_images (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            observation_id INTEGER NOT NULL REFERENCES observations (id) ON DELETE CASCADE,
+            path TEXT NOT NULL,
+            kind TEXT DEFAULT 'traitée',
+            software TEXT DEFAULT '',
+            palette TEXT DEFAULT '',
+            caption TEXT DEFAULT '',
+            is_favorite INTEGER DEFAULT 0,
+            position INTEGER DEFAULT 0
+        );
+    """)
+    cursor.execute("""
+        CREATE TABLE image_targets (
+            image_id INTEGER NOT NULL REFERENCES observation_images (id) ON DELETE CASCADE,
+            target_id INTEGER NOT NULL REFERENCES targets (id) ON DELETE CASCADE,
+            PRIMARY KEY (image_id, target_id)
+        );
+    """)
+
+    rows = cursor.execute("SELECT id, image_raw, image_processed FROM observations").fetchall()
+    for obs_id, raw, processed in rows:
+        position = 0
+        if processed:
+            kind, software, palette, caption = guess_image_details(processed)
+            cursor.execute("""
+                INSERT INTO observation_images (observation_id, path, kind, software, palette, caption, is_favorite, position)
+                VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+            """, (obs_id, processed, kind, software, palette, caption, position))
+            # L'image traitée montrait la cible de la fiche d'origine (la première de l'observation)
+            first_target = cursor.execute(
+                "SELECT target_id FROM observation_targets WHERE observation_id = ? ORDER BY rowid LIMIT 1", (obs_id,)
+            ).fetchone()
+            if first_target:
+                cursor.execute("INSERT INTO image_targets (image_id, target_id) VALUES (?, ?)", (cursor.lastrowid, first_target[0]))
+            position += 1
+        if raw:
+            # Le champ « image brute » contenait en pratique la carte de la constellation
+            cursor.execute("""
+                INSERT INTO observation_images (observation_id, path, kind, is_favorite, position)
+                VALUES (?, ?, 'carte', ?, ?)
+            """, (obs_id, raw, 0 if processed else 1, position))
+
+    cursor.execute("ALTER TABLE observations DROP COLUMN image_raw")
+    cursor.execute("ALTER TABLE observations DROP COLUMN image_processed")
+    cursor.execute("UPDATE schema_version SET version = 5")
 
 
 def init_db():
@@ -417,6 +529,12 @@ def init_db():
         migrate_to_v4(conn)
         current_version = 4
         print("Migration vers DB v4 (sessions et observations multi-cibles) effectuée.")
+
+    # --- VERSION 5: Images multiples et réglages ---
+    if current_version < 5:
+        migrate_to_v5(conn)
+        current_version = 5
+        print("Migration vers DB v5 (images multiples) effectuée.")
     conn.commit()
     conn.close()
 
@@ -444,10 +562,11 @@ def export_database(request: ExportRequest):
 
 @app.get("/api/targets", response_model=List[TargetSchema])
 def get_targets():
-    conn = sqlite3.connect(DB_PATH)
+    conn = connect()
     cursor = conn.cursor()
     cursor.execute("SELECT id, name, usual_name, constellation, other_designations, type, group_name, magnitude, color_index, surf_brightness, size, ra, dec, image_ref, notes FROM targets")
     rows = cursor.fetchall()
+    folder = images_folder(conn)
     conn.close()
     
     # On reconstruit les objets JSON pour matcher notre frontend
@@ -455,28 +574,29 @@ def get_targets():
         TargetSchema(
             id=r[0], name=r[1], usualName=r[2], constellation=r[3], otherDesignations=r[4],
             type=r[5], group=r[6], magnitude=r[7], colorIndex=r[8], surfBrightness=r[9],
-            size=r[10], ra=r[11], dec=r[12], imageRef=r[13], notes=r[14]
+            size=r[10], ra=r[11], dec=r[12], imageRef=to_full_path(r[13] or "", folder), notes=r[14]
         ) for r in rows
     ]
 
 @app.post("/api/targets", response_model=TargetSchema)
 def save_target(target: TargetSchema):
-    conn = sqlite3.connect(DB_PATH)
+    conn = connect()
     cursor = conn.cursor()
+    stored_ref = to_stored_path(target.imageRef, images_folder(conn))
     
     if target.id:
         # Mise à jour
         cursor.execute("""
             UPDATE targets SET name=?, usual_name=?, constellation=?, other_designations=?, type=?, group_name=?, magnitude=?, color_index=?, surf_brightness=?, size=?, ra=?, dec=?, image_ref=?, notes=?
             WHERE id=?
-        """, (target.name, target.usualName, target.constellation, target.otherDesignations, target.type, target.group, target.magnitude, target.colorIndex, target.surfBrightness, target.size, target.ra, target.dec, target.imageRef, target.notes, target.id))
+        """, (target.name, target.usualName, target.constellation, target.otherDesignations, target.type, target.group, target.magnitude, target.colorIndex, target.surfBrightness, target.size, target.ra, target.dec, stored_ref, target.notes, target.id))
         target_id = target.id
     else:
         # Création
         cursor.execute("""
             INSERT INTO targets (name, usual_name, constellation, other_designations, type, group_name, magnitude, color_index, surf_brightness, size, ra, dec, image_ref, notes)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (target.name, target.usualName, target.constellation, target.otherDesignations, target.type, target.group, target.magnitude, target.colorIndex, target.surfBrightness, target.size, target.ra, target.dec, target.imageRef, target.notes))
+        """, (target.name, target.usualName, target.constellation, target.otherDesignations, target.type, target.group, target.magnitude, target.colorIndex, target.surfBrightness, target.size, target.ra, target.dec, stored_ref, target.notes))
         target_id = cursor.lastrowid
         
     conn.commit()
@@ -498,15 +618,14 @@ def delete_target(target_id: int):
 
 OBSERVATION_COLUMNS = """
     o.id, o.start_utc, o.end_utc, s.location_id, s.bortle, o.session_id, s.night_date, o.instrument, o.sensor,
-    o.filter, o.sensor_temp, o.sub_exposure, o.img_total, o.notes, o.image_raw, o.image_processed, o.legacy_location
+    o.filter, o.sensor_temp, o.sub_exposure, o.img_total, o.notes, o.legacy_location
 """
 
-def observation_from_row(r, targets) -> ObservationSchema:
+def observation_from_row(r, targets, images) -> ObservationSchema:
     return ObservationSchema(
         id=r[0], start=r[1], end=r[2] or "", locationId=r[3], bortle=r[4], sessionId=r[5], nightDate=r[6] or "",
         instrument=r[7] or "", sensor=r[8] or "", filter=r[9] or "", sensorTemp=r[10] or "", subExposure=r[11] or "",
-        imgTotal=r[12] or 0, notes=r[13] or "", imageRaw=r[14] or "", imageProcessed=r[15] or "",
-        legacyLocation=r[16] or "", targets=targets,
+        imgTotal=r[12] or 0, notes=r[13] or "", legacyLocation=r[14] or "", targets=targets, images=images,
     )
 
 def read_observations(conn, observation_id: Optional[int] = None) -> List[ObservationSchema]:
@@ -518,7 +637,49 @@ def read_observations(conn, observation_id: Optional[int] = None) -> List[Observ
         targets.setdefault(t[0], []).append(ObservationTargetSchema(
             targetId=t[1], altitude=t[2] or "", imgGood=t[3] or 0, imgPass=t[4] or 0, imgBad=t[5] or 0, notes=t[6] or "",
         ))
-    return [observation_from_row(r, targets.get(r[0], [])) for r in rows]
+    images = read_images(conn)
+    return [observation_from_row(r, targets.get(r[0], []), images.get(r[0], [])) for r in rows]
+
+def read_images(conn):
+    folder = images_folder(conn)
+    image_targets = {}
+    for image_id, target_id in conn.execute("SELECT image_id, target_id FROM image_targets ORDER BY rowid"):
+        image_targets.setdefault(image_id, []).append(target_id)
+    images = {}
+    for i in conn.execute("""
+        SELECT id, observation_id, path, kind, software, palette, caption, is_favorite
+        FROM observation_images ORDER BY observation_id, position, id
+    """):
+        full = to_full_path(i[2], folder)
+        images.setdefault(i[1], []).append(ObservationImageSchema(
+            id=i[0], path=full, kind=i[3] or "", software=i[4] or "", palette=i[5] or "", caption=i[6] or "",
+            isFavorite=bool(i[7]), targetIds=image_targets.get(i[0], []), missing=file_missing(full),
+        ))
+    return images
+
+def save_images(cursor, observation_id: int, images: List[ObservationImageSchema], folder: str):
+    """Remplace les images de l'observation par la liste reçue, dans cet ordre."""
+    kept = [i.id for i in images if i.id]
+    cursor.execute(
+        f"DELETE FROM observation_images WHERE observation_id = ? AND id NOT IN ({','.join('?' * len(kept)) or 'NULL'})",
+        (observation_id, *kept),
+    )
+    # Une seule image favorite : la première cochée, sinon la première de la liste
+    favorite = next((n for n, i in enumerate(images) if i.isFavorite), 0)
+    for position, image in enumerate(images):
+        values = (to_stored_path(image.path, folder), image.kind, image.software, image.palette, image.caption,
+                  int(position == favorite), position)
+        cursor.execute("UPDATE observation_images SET path=?, kind=?, software=?, palette=?, caption=?, is_favorite=?, position=? WHERE id=? AND observation_id=?",
+                       (*values, image.id, observation_id))
+        if not image.id or cursor.rowcount == 0:
+            cursor.execute("""
+                INSERT INTO observation_images (path, kind, software, palette, caption, is_favorite, position, observation_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (*values, observation_id))
+            image.id = cursor.lastrowid
+        cursor.execute("DELETE FROM image_targets WHERE image_id = ?", (image.id,))
+        for target_id in dict.fromkeys(image.targetIds):
+            cursor.execute("INSERT INTO image_targets (image_id, target_id) VALUES (?, ?)", (image.id, target_id))
 
 @app.get("/api/observations", response_model=List[ObservationSchema])
 def get_observations():
@@ -551,11 +712,11 @@ def save_observation(obs: ObservationSchema):
     try:
         session_id = find_or_create_session(cursor, night_of(obs.start), obs.locationId, obs.bortle)
         values = (session_id, obs.start, obs.end, obs.instrument, obs.sensor, obs.filter, obs.sensorTemp, obs.subExposure,
-                  obs.imgTotal, obs.notes, obs.imageRaw, obs.imageProcessed)
+                  obs.imgTotal, obs.notes)
         if obs.id:
             cursor.execute("""
                 UPDATE observations SET session_id=?, start_utc=?, end_utc=?, instrument=?, sensor=?, filter=?, sensor_temp=?,
-                       sub_exposure=?, img_total=?, notes=?, image_raw=?, image_processed=?
+                       sub_exposure=?, img_total=?, notes=?
                 WHERE id=?
             """, (*values, obs.id))
             if cursor.rowcount == 0:
@@ -567,8 +728,8 @@ def save_observation(obs: ObservationSchema):
         else:
             cursor.execute("""
                 INSERT INTO observations (session_id, start_utc, end_utc, instrument, sensor, filter, sensor_temp,
-                                          sub_exposure, img_total, notes, image_raw, image_processed)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                          sub_exposure, img_total, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, values)
             obs.id = cursor.lastrowid
         for t in obs.targets:
@@ -576,6 +737,10 @@ def save_observation(obs: ObservationSchema):
                 INSERT INTO observation_targets (observation_id, target_id, altitude, img_good, img_pass, img_bad, notes)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (obs.id, t.targetId, t.altitude, t.imgGood, t.imgPass, t.imgBad, t.notes))
+        # Une image ne peut montrer qu'une cible de l'observation
+        for image in obs.images:
+            image.targetIds = [t for t in image.targetIds if t in target_ids]
+        save_images(cursor, obs.id, obs.images, images_folder(conn))
         delete_empty_sessions(cursor)
         conn.commit()
         return read_observations(conn, obs.id)[0]
@@ -593,6 +758,37 @@ def delete_observation(obs_id: int):
     conn.commit()
     conn.close()
     return {"status": "success"}
+
+# ================= RÉGLAGES =================
+@app.get("/api/settings", response_model=SettingsSchema)
+def get_settings():
+    conn = connect()
+    settings = SettingsSchema(imagesFolder=images_folder(conn))
+    conn.close()
+    return settings
+
+@app.post("/api/settings", response_model=SettingsSchema)
+def save_settings(settings: SettingsSchema):
+    folder = settings.imagesFolder.strip()
+    if folder and not os.path.isabs(folder):
+        raise HTTPException(status_code=422, detail="Le dossier des images doit être un chemin complet (ex. E:\\Astro).")
+    conn = connect()
+    cursor = conn.cursor()
+    previous = images_folder(conn)
+    cursor.execute("INSERT INTO settings (key, value) VALUES ('images_folder', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", (folder,))
+    # Les chemins déjà relatifs suivent le nouveau dossier (changement de lettre de disque) ;
+    # les chemins complets qui se trouvent dans ce dossier deviennent relatifs.
+    # Sans dossier, les chemins relatifs redeviennent complets d'après l'ancien dossier.
+    def convert(path: str) -> str:
+        return to_stored_path(path, folder) if folder else to_full_path(path, previous)
+    for image_id, path in cursor.execute("SELECT id, path FROM observation_images").fetchall():
+        cursor.execute("UPDATE observation_images SET path = ? WHERE id = ?", (convert(path), image_id))
+    for target_id, path in cursor.execute("SELECT id, image_ref FROM targets").fetchall():
+        cursor.execute("UPDATE targets SET image_ref = ? WHERE id = ?", (convert(path or ""), target_id))
+    conn.commit()
+    conn.close()
+    return SettingsSchema(imagesFolder=folder)
+
 
 # ================= LIEUX =================
 def location_from_row(r) -> LocationSchema:

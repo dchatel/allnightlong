@@ -2,6 +2,7 @@
 import { dev } from '$app/environment';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { message, save } from '@tauri-apps/plugin-dialog';
+import { convertFileSrc } from '@tauri-apps/api/core';
 import { slide, fade } from 'svelte/transition';
 
 // En production, le port est annoncé par le backend à son démarrage
@@ -74,6 +75,48 @@ export interface ObservationTarget {
 	notes: string;
 }
 
+export interface ObservationImage {
+	id?: number;
+	path: string;
+	kind: string;
+	software: string;
+	palette: string;
+	caption: string;
+	isFavorite: boolean;
+	// Cibles visibles sur l'image ; aucune = champ entier
+	targetIds: number[];
+	missing?: boolean;
+}
+
+export const IMAGE_KINDS: Record<string, string> = {
+	'traitée': 'Traitée',
+	'brute': 'Brute',
+	'astrométrie': 'Astrométrie',
+	'carte': 'Carte du ciel'
+};
+
+// Titre d'une image : logiciel et palette, sinon son type
+export function imageTitle(image: ObservationImage) {
+	return [image.software, image.palette].filter(Boolean).join(' · ') || IMAGE_KINDS[image.kind] || image.kind || 'Image';
+}
+
+// Vignette d'une observation : l'image favorite, sinon la première
+export function favoriteImage(obs: any): ObservationImage | null {
+	const images: ObservationImage[] = obs?.images ?? [];
+	return images.find(i => i.isFavorite) ?? images[0] ?? null;
+}
+
+// Chemin local → adresse lisible par la fenêtre de l'application
+export function imageSrc(path: string) {
+	if (!path) return '';
+	if (path.startsWith('http://') || path.startsWith('https://')) return path;
+	try {
+		return convertFileSrc(path);
+	} catch {
+		return path;
+	}
+}
+
 export function emptyObservationTarget(targetId: number | null = null): ObservationTarget {
 	return { targetId, altitude: '', imgGood: 0, imgPass: 0, imgBad: 0, notes: '' };
 }
@@ -139,6 +182,8 @@ class AppState {
 	activeObservationId = $state<number | null>(null);
 	isEditingObservation = $state(false);
 	showMapModal = $state(false);
+	showSettings = $state(false);
+	settings = $state({ imagesFolder: '' });
 
 	// Clone de modification pour la cible active
 	targetForm = $state<any>({ name: '' });
@@ -172,7 +217,7 @@ class AppState {
 				const res = apiUrl ? await apiFetch('/status') : null;
 				if (res?.ok) {
 					console.log("Backend is ready.");
-					await Promise.all([this.loadTargets(), this.loadLocations(), this.loadObservations()]);
+					await Promise.all([this.loadTargets(), this.loadLocations(), this.loadObservations(), this.loadSettings()]);
 					this.isBackendReady = true;
 					break;
 				}
@@ -268,6 +313,33 @@ class AppState {
 
 		const appWindow = getCurrentWindow();
 		await appWindow.close();
+	}
+
+	// --- RÉGLAGES ---
+
+	async loadSettings() {
+		try {
+			const res = await apiFetch('/settings');
+			this.settings = await res.json();
+		} catch (err) {
+			await showApiError('Chargement des réglages impossible', err);
+		}
+	}
+
+	async saveSettings(settings: { imagesFolder: string }) {
+		try {
+			const res = await apiFetch('/settings', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(settings)
+			});
+			this.settings = await res.json();
+			this.showSettings = false;
+			// Les chemins d'images ont pu changer de forme : on relit ce qui les affiche
+			await Promise.all([this.loadTargets(), this.loadObservations()]);
+		} catch (err) {
+			await showApiError('Enregistrement des réglages impossible', err);
+		}
 	}
 
 	async exportDatabase() {
@@ -606,9 +678,8 @@ class AppState {
 			subExposure: '10',
 			imgTotal: 0,
 			notes: '',
-			imageRaw: '',
-			imageProcessed: '',
-			legacyLocation: '',
+			images: [],
+legacyLocation: '',
 			targets: targetId ? [emptyObservationTarget(targetId)] : []
 		};
 

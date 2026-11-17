@@ -1,24 +1,14 @@
 <script lang="ts">
-	import { appState, formatDate, type ObservationTarget } from '$lib/state.svelte';
-	import { convertFileSrc } from '@tauri-apps/api/core';
+	import { appState, formatDate, favoriteImage, imageSrc, IMAGE_KINDS, type ObservationTarget } from '$lib/state.svelte';
 
 	// targetId : cible dont on montre les poses (fiche cible) ; sinon la première de l'observation
 	let { obs, targetId = null }: { obs: any; targetId?: number | null } = $props();
 
-	function displayUrl(imageUrl: string) {
-		if (!imageUrl) return '';
-		if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) return imageUrl;
-		try {
-			return convertFileSrc(imageUrl);
-		} catch (e) {
-			return imageUrl;
-		}
-	}
-
-	// Image traitée en priorité (résultat final, plus représentatif en vignette),
-	// on retombe sur le raw si elle n'existe pas encore.
-	let img = $derived(displayUrl(obs.imageProcessed || obs.imageRaw || ''));
-	let kind = $derived(obs.imageProcessed ? 'Traitée' : obs.imageRaw ? 'Brute' : null);
+	// Vignette : l'image favorite de l'observation
+	let image = $derived(favoriteImage(obs));
+	let img = $derived(image && !image.missing ? imageSrc(image.path) : '');
+	let kind = $derived(image ? (IMAGE_KINDS[image.kind] ?? image.kind) : null);
+	let imageCount = $derived(obs.images?.length ?? 0);
 	let row = $derived<ObservationTarget | undefined>(
 		obs.targets.find((t: ObservationTarget) => t.targetId === targetId) ?? obs.targets[0]
 	);
@@ -43,7 +33,7 @@
 
 	{#if kind}
 		<span class="absolute top-2 right-2 text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-black/60 text-surface-200">
-			{kind}
+			{kind}{imageCount > 1 ? ` · ${imageCount}` : ''}
 		</span>
 	{/if}
 

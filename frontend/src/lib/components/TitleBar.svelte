@@ -16,6 +16,10 @@
   <div class="logo">🔭 AwakeTonight</div>
   
   <div class="window-controls">
+    <button class="control-btn" onclick={() => (appState.showSettings = true)} title="Réglages">
+      <svg width="16" height="16" viewBox="0 0 24 24"><path fill="white" d="M19.14 12.94a7.07 7.07 0 0 0 0-1.88l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.61-.22l-2.39.96a7.03 7.03 0 0 0-1.63-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.59.24-1.13.56-1.63.94l-2.39-.96a.5.5 0 0 0-.61.22L2.71 8.84a.5.5 0 0 0 .12.64l2.03 1.58a7.07 7.07 0 0 0 0 1.88l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.13.22.39.31.61.22l2.39-.96c.5.38 1.04.7 1.63.94l.36 2.54c.04.24.25.42.5.42h3.84c.25 0 .46-.18.5-.42l.36-2.54c.59-.24 1.13-.56 1.63-.94l2.39.96c.22.09.48 0 .61-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"/></svg>
+    </button>
+
     <button class="control-btn" onclick={() => appState.exportDatabase()} title="Exporter la base de données">
       <svg width="16" height="16" viewBox="0 0 24 24"><path fill="white" d="M13 3h-2v10.17l-3.59-3.58L6 11l6 6l6-6l-1.41-1.41L13 13.17V3zM5 19h14v2H5z"/></svg>
     </button>
