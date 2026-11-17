@@ -1,8 +1,8 @@
 <script lang="ts">
 	import type { WeatherReading } from '$lib/state.svelte';
 
-	// Météo de la nuit en petits graphes superposés, sur le même axe du temps (TU).
-	// Un graphe par grandeur et par unité : jamais deux échelles sur un même graphe.
+	// Météo de la nuit : des graphes encadrés, empilés sur le même axe du temps (TU), un par unité.
+	// Jamais deux échelles dans un même graphe : les courbes qui s'y croisent se comparent vraiment.
 	let {
 		readings,
 		windowStart = '',
@@ -10,56 +10,62 @@
 	}: { readings: WeatherReading[]; windowStart?: string; windowEnd?: string } = $props();
 
 	type Field = keyof WeatherReading;
-	interface Series { field: Field; label: string; color: string; digits: number }
+	interface Series { field: Field; label: string; color: string; digits: number; dashed?: boolean }
 	interface Panel { key: string; title: string; unit: string; fixed?: [number, number]; series: Series[] }
 
-	// Couleurs validées sur le fond sombre : dégradé d'un seul bleu pour les trois couches de nuages
-	// (du plus visible, bas, au plus discret, hauts), puis une teinte distincte par grandeur.
+	// Couleurs validées sur le fond sombre : un seul bleu, du plus clair (bas) au plus foncé (hauts),
+	// pour les couches de nuages ; l'humidité, sur la même échelle en %, est en pointillés.
 	const PANELS: Panel[] = [
-		{ key: 'clouds', title: 'Nuages', unit: '%', fixed: [0, 100], series: [
-			{ field: 'cloudLow', label: 'bas', color: '#9ec5f4', digits: 0 },
-			{ field: 'cloudMid', label: 'moyens', color: '#5598e7', digits: 0 },
-			{ field: 'cloudHigh', label: 'hauts', color: '#256abf', digits: 0 }
+		{ key: 'percent', title: 'Nuages et humidité', unit: '%', fixed: [0, 100], series: [
+			{ field: 'cloudLow', label: 'Nuages bas', color: '#9ec5f4', digits: 0 },
+			{ field: 'cloudMid', label: 'Nuages moyens', color: '#5598e7', digits: 0 },
+			{ field: 'cloudHigh', label: 'Nuages hauts', color: '#256abf', digits: 0 },
+			{ field: 'humidity', label: 'Humidité', color: '#9085e9', digits: 0, dashed: true }
 		] },
 		{ key: 'temp', title: 'Température et point de rosée', unit: '°C', series: [
-			{ field: 'temp', label: 'température', color: '#d95926', digits: 1 },
-			{ field: 'dewPoint', label: 'point de rosée', color: '#199e70', digits: 1 }
-		] },
-		{ key: 'humidity', title: 'Humidité', unit: '%', fixed: [0, 100], series: [
-			{ field: 'humidity', label: 'humidité', color: '#9085e9', digits: 0 }
+			{ field: 'temp', label: 'Température', color: '#d95926', digits: 1 },
+			{ field: 'dewPoint', label: 'Point de rosée', color: '#199e70', digits: 1, dashed: true }
 		] },
 		{ key: 'seeing', title: 'Seeing (meteoblue)', unit: '″', series: [
-			{ field: 'seeing', label: 'seeing', color: '#d55181', digits: 2 }
+			{ field: 'seeing', label: 'Seeing', color: '#d55181', digits: 2 }
 		] },
 		{ key: 'jet', title: 'Jet stream', unit: 'm/s', series: [
-			{ field: 'jetStream', label: 'jet stream', color: '#c98500', digits: 0 }
+			{ field: 'jetStream', label: 'Jet stream', color: '#c98500', digits: 0 }
 		] }
 	];
 
-	const PLOT_H = 72;
-	const TITLE_H = 20;
-	const GAP = 10;
-	const AXIS_H = 20;
-	const LEFT = 40;
-	const RIGHT = 14;
+	const HEADER_H = 22;
+	const PLOT_H = 76;
+	const PAD_B = 8;
+	const GAP = 8;
+	const AXIS_H = 18;
+	const LEFT = 44;
+	const RIGHT = 16;
 
 	let width = $state(600);
-	let hidden = $state<Record<string, boolean>>({ jet: true });
+	// Courbes masquées (le jet stream l'est d'abord) et courbe mise en avant au survol de sa puce
+	let hidden = $state<Partial<Record<Field, boolean>>>({ jetStream: true });
+	let focused = $state<Field | null>(null);
 	let hoverIndex = $state<number | null>(null);
 
 	const toMs = (time: string) => new Date(time.replace(' ', 'T') + 'Z').getTime();
 	let points = $derived(readings.map(r => ({ r, t: toMs(r.time) })).sort((a, b) => a.t - b.t));
 
-	let available = $derived(PANELS.filter(p => p.series.some(s => readings.some(r => r[s.field] != null))));
-	let shown = $derived(available.filter(p => !hidden[p.key]));
+	const hasData = (field: Field) => readings.some(r => r[field] != null);
+	let allSeries = $derived(PANELS.flatMap(p => p.series.map(s => ({ ...s, unit: p.unit }))).filter(s => hasData(s.field)));
+	let shown = $derived(
+		PANELS.map(p => ({ ...p, series: p.series.filter(s => hasData(s.field) && !hidden[s.field]) })).filter(p => p.series.length)
+	);
 
 	let t0 = $derived(Math.min(...points.map(p => p.t), windowStart ? toMs(windowStart) : Infinity));
 	let t1 = $derived(Math.max(...points.map(p => p.t), windowEnd ? toMs(windowEnd) : -Infinity));
 	let plotW = $derived(Math.max(100, width - LEFT - RIGHT));
 	const x = (t: number) => LEFT + (t1 > t0 ? ((t - t0) / (t1 - t0)) * plotW : plotW / 2);
 
-	let height = $derived(shown.length * (TITLE_H + PLOT_H + GAP) + AXIS_H);
-	const panelTop = (i: number) => i * (TITLE_H + PLOT_H + GAP) + TITLE_H;
+	const BLOCK_H = HEADER_H + PLOT_H + PAD_B;
+	let height = $derived(shown.length * (BLOCK_H + GAP) - GAP + AXIS_H);
+	const blockTop = (i: number) => i * (BLOCK_H + GAP);
+	const plotTop = (i: number) => blockTop(i) + HEADER_H;
 
 	function domain(panel: Panel): [number, number] {
 		if (panel.fixed) return panel.fixed;
@@ -103,20 +109,30 @@
 
 	let hovered = $derived(hoverIndex == null ? null : points[hoverIndex] ?? null);
 	const format = (v: unknown, digits: number) => (v == null ? '—' : (v as number).toFixed(digits));
+	// Une courbe mise en avant : les autres s'estompent
+	const opacity = (field: Field) => (focused && focused !== field ? 0.15 : 1);
 </script>
 
 {#if readings.length === 0}
 	<p class="text-xs text-surface-500">Aucun relevé pour cette nuit.</p>
 {:else}
-	<!-- Choix des graphes affichés -->
-	<div class="flex flex-wrap gap-1.5 mb-2">
-		{#each available as panel (panel.key)}
+	<!-- Une puce par courbe : clic pour l'afficher ou la masquer, survol pour la mettre en avant -->
+	<div class="flex flex-wrap gap-1.5 mb-3">
+		{#each allSeries as s (s.field)}
 			<button
 				type="button"
-				onclick={() => (hidden[panel.key] = !hidden[panel.key])}
+				onclick={() => (hidden[s.field] = !hidden[s.field])}
+				onmouseenter={() => (focused = hidden[s.field] ? null : s.field)}
+				onmouseleave={() => (focused = null)}
 				class="chip"
-				class:chip-on={!hidden[panel.key]}
-			>{panel.title}</button>
+				class:chip-off={hidden[s.field]}
+				title={hidden[s.field] ? 'Afficher cette courbe' : 'Masquer cette courbe'}
+			>
+				<svg width="16" height="6" aria-hidden="true">
+					<line x1="1" y1="3" x2="15" y2="3" stroke={s.color} stroke-width="2.5" stroke-linecap="round" stroke-dasharray={s.dashed ? '3 3' : undefined} />
+				</svg>
+				{s.label}
+			</button>
 		{/each}
 	</div>
 
@@ -131,18 +147,11 @@
 			class="block select-none"
 		>
 			{#each shown as panel, i (panel.key)}
-				{@const top = panelTop(i)}
+				{@const top = plotTop(i)}
 				{@const dom = domain(panel)}
-				<!-- Titre et légende du graphe -->
-				<text x={LEFT} y={top - 7} class="title">{panel.title} ({panel.unit})</text>
-				{#if panel.series.length > 1}
-					{#each panel.series as s, n (s.field)}
-						<g transform="translate({width - RIGHT - (panel.series.length - n) * 92}, {top - 11})">
-							<rect width="10" height="3" y="3" rx="1.5" fill={s.color} />
-							<text x="14" y="8" class="legend">{s.label}</text>
-						</g>
-					{/each}
-				{/if}
+				<!-- Cadre du graphe -->
+				<rect x="0.5" y={blockTop(i) + 0.5} width={width - 1} height={BLOCK_H - 1} rx="6" class="frame" />
+				<text x="10" y={blockTop(i) + 15} class="title">{panel.title} ({panel.unit})</text>
 
 				<!-- Créneau de l'observation -->
 				{#if windowStart && windowEnd}
@@ -157,41 +166,50 @@
 
 				{#each panel.series as s (s.field)}
 					{@const pts = seriesPoints(s.field, dom, top)}
-					{#if pts.length > 1}
-						<polyline points={pts.map(p => `${p.x},${p.y}`).join(' ')} fill="none" stroke={s.color} stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
-					{/if}
-					{#if pts.length < points.length || pts.length === 1}
-						{#each pts as p, k (k)}
-							<circle cx={p.x} cy={p.y} r="3" fill={s.color} stroke="#1e1e21" stroke-width="1.5" />
-						{/each}
-					{/if}
-					{#if hovered && hovered.r[s.field] != null}
-						<circle cx={x(hovered.t)} cy={y(hovered.r[s.field] as number, dom, top)} r="4" fill={s.color} stroke="#1e1e21" stroke-width="2" />
-					{/if}
+					<g opacity={opacity(s.field)} style="transition: opacity 0.15s">
+						{#if pts.length > 1}
+							<polyline
+								points={pts.map(p => `${p.x},${p.y}`).join(' ')}
+								fill="none"
+								stroke={s.color}
+								stroke-width={focused === s.field ? 3 : 2}
+								stroke-dasharray={s.dashed ? '5 4' : undefined}
+								stroke-linejoin="round"
+								stroke-linecap="round"
+							/>
+						{/if}
+						{#if pts.length < points.length || pts.length === 1}
+							{#each pts as p, k (k)}
+								<circle cx={p.x} cy={p.y} r="3" fill={s.color} stroke="#1e1e21" stroke-width="1.5" />
+							{/each}
+						{/if}
+						{#if hovered && hovered.r[s.field] != null}
+							<circle cx={x(hovered.t)} cy={y(hovered.r[s.field] as number, dom, top)} r="4" fill={s.color} stroke="#1e1e21" stroke-width="2" />
+						{/if}
+					</g>
 				{/each}
 			{/each}
 
 			<!-- Axe du temps -->
 			{#each ticks as t (t)}
-				<text x={x(t)} y={height - 5} class="axis" text-anchor="middle">{hourLabel(t)}</text>
+				<text x={x(t)} y={height - 4} class="axis" text-anchor="middle">{hourLabel(t)}</text>
 			{/each}
 
 			{#if hovered}
-				<line x1={x(hovered.t)} x2={x(hovered.t)} y1={TITLE_H - 4} y2={height - AXIS_H} class="crosshair" />
+				<line x1={x(hovered.t)} x2={x(hovered.t)} y1={HEADER_H} y2={height - AXIS_H} class="crosshair" />
 			{/if}
 		</svg>
 
 		{#if hovered}
 			<!-- Toutes les valeurs de l'heure survolée -->
-			<div
-				class="tooltip"
-				style="left: {Math.min(x(hovered.t) + 12, width - 190)}px; top: 4px"
-			>
+			<div class="tooltip" style="left: {Math.min(x(hovered.t) + 12, width - 190)}px; top: 4px">
 				<div class="font-bold text-white mb-1">{hovered.r.time.slice(11, 16)} TU</div>
 				{#each shown as panel (panel.key)}
 					{#each panel.series as s (s.field)}
 						<div class="flex items-center gap-2">
-							<span class="w-2.5 h-0.5 rounded" style="background: {s.color}"></span>
+							<svg width="12" height="4" aria-hidden="true">
+								<line x1="1" y1="2" x2="11" y2="2" stroke={s.color} stroke-width="2" stroke-dasharray={s.dashed ? '2 2' : undefined} />
+							</svg>
 							<span class="flex-1 text-surface-300">{s.label}</span>
 							<span class="text-white tabular-nums">{format(hovered.r[s.field], s.digits)} {panel.unit}</span>
 						</div>
@@ -204,10 +222,10 @@
 {/if}
 
 <style>
+	.frame { fill: #19191c; stroke: #333; stroke-width: 1; }
 	.title { fill: #e4e4e7; font-size: 11px; font-weight: 700; }
-	.legend { fill: #a1a1aa; font-size: 10px; }
 	.axis { fill: #8b8b94; font-size: 10px; }
-	.grid { stroke: #2e2e33; stroke-width: 1; }
+	.grid { stroke: #2a2a2e; stroke-width: 1; }
 	.window { fill: rgb(99 102 241 / 0.12); }
 	.crosshair { stroke: #a1a1aa; stroke-width: 1; stroke-dasharray: 3 3; }
 	.tooltip {
@@ -222,15 +240,24 @@
 		box-shadow: 0 6px 20px rgb(0 0 0 / 0.5);
 	}
 	.chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
 		padding: 2px 10px;
 		border-radius: 999px;
 		font-size: 11px;
 		background: #202024;
-		border: 1px solid #333;
-		color: #8b8b94;
+		border: 1px solid #3f3f46;
+		color: #e4e4e7;
 	}
-	.chip-on {
+	.chip:hover {
 		border-color: #6366f1;
-		color: white;
+	}
+	.chip-off {
+		color: #6b6b74;
+		border-style: dashed;
+	}
+	.chip-off svg {
+		opacity: 0.35;
 	}
 </style>
