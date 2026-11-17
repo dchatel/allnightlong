@@ -5,13 +5,14 @@ import socket
 import sqlite3
 import sys
 import threading
+import re
 import json
 import urllib.error
 import urllib.parse
 import urllib.request
 import ssl
 import truststore
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -108,26 +109,37 @@ class TargetSchema(BaseModel):
     imageRef: str = ""
     notes: str = ""
 
+# Une cible vue dans une observation : la hauteur et les poses retenues lui sont propres
+class ObservationTargetSchema(BaseModel):
+    targetId: int
+    altitude: str = ""
+    imgGood: int = 0
+    imgPass: int = 0
+    imgBad: int = 0
+    notes: str = ""
+
 class ObservationSchema(BaseModel):
     id: Optional[int] = None
-    targetId: int
-    date: str
-    obsStart: str = ""
-    obsEnd: str = ""
-    location: str = ""
-    altitude: str = ""
+    # Date et heure TU complètes, "AAAA-MM-JJ HH:MM" (l'heure peut manquer sur d'anciennes fiches)
+    start: str
+    end: str = ""
+    # Lieu et Bortle sont ceux de la session (une nuit dans un lieu), partagés par ses observations
+    locationId: Optional[int] = None
+    bortle: Optional[float] = None
+    sessionId: Optional[int] = None
+    nightDate: str = ""
+    instrument: str = ""
     sensor: str = ""
     filter: str = ""
     sensorTemp: str = ""
     subExposure: str = ""
     imgTotal: int = 0
-    imgGood: int = 0
-    imgPass: int = 0
-    imgBad: int = 0
-    otherObjects: str = ""
+    notes: str = ""
     imageRaw: str = ""
     imageProcessed: str = ""
-    locationId: Optional[int] = None
+    # Lieu saisi en texte libre avant les lieux enregistrés, conservé jusqu'à sa conversion
+    legacyLocation: str = ""
+    targets: List[ObservationTargetSchema] = []
 
 class LocationSchema(BaseModel):
     id: Optional[int] = None
@@ -165,8 +177,128 @@ def backup_before_migration(version: int):
     print(f"Sauvegarde avant migration : {destination}")
 
 
+# ================= DATES ET SESSIONS =================
+DATETIME_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}( \d{2}:\d{2})?$")
+
+def connect():
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("PRAGMA foreign_keys = ON;")
+    return conn
+
+def night_of(start: str) -> str:
+    """Nuit d'une observation : une observation commencée avant midi appartient à la nuit de la veille."""
+    day = datetime.strptime(start[:10], "%Y-%m-%d")
+    if len(start) > 10 and start[11:13] < "12":
+        day -= timedelta(days=1)
+    return day.strftime("%Y-%m-%d")
+
+def legacy_start_end(date: str, obs_start: str, obs_end: str):
+    """Ancien format (date + heures) : la date est prise comme celle du début, la fin passe au
+    lendemain si elle précède le début. Les dates exactes seront reprises des FITS (lot Migration)."""
+    start = f"{date} {obs_start}" if obs_start else date
+    if not obs_end:
+        return start, ""
+    end_day = datetime.strptime(date, "%Y-%m-%d")
+    if obs_start and obs_end < obs_start:
+        end_day += timedelta(days=1)
+    return start, f"{end_day:%Y-%m-%d} {obs_end}"
+
+def find_or_create_session(cursor, night_date: str, location_id, bortle):
+    cursor.execute("SELECT id FROM sessions WHERE night_date = ? AND location_id IS ?", (night_date, location_id))
+    row = cursor.fetchone()
+    if row:
+        if bortle is not None:
+            cursor.execute("UPDATE sessions SET bortle = ? WHERE id = ?", (bortle, row[0]))
+        return row[0]
+    if bortle is None and location_id is not None:
+        default = cursor.execute("SELECT bortle FROM locations WHERE id = ?", (location_id,)).fetchone()
+        bortle = default[0] if default else None
+    cursor.execute("INSERT INTO sessions (night_date, location_id, bortle) VALUES (?, ?, ?)", (night_date, location_id, bortle))
+    return cursor.lastrowid
+
+def delete_empty_sessions(cursor):
+    cursor.execute("DELETE FROM sessions WHERE id NOT IN (SELECT session_id FROM observations WHERE session_id IS NOT NULL)")
+
+
 # ================= INITIALISATION & MIGRATIONS =================
-LATEST_SCHEMA_VERSION = 3
+LATEST_SCHEMA_VERSION = 4
+
+def migrate_to_v4(conn):
+    # Reconstruction de la table observations : SQLite ne sait pas retirer une clé étrangère.
+    # Les contraintes sont suspendues le temps de la copie, en une seule transaction.
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys = OFF;")
+    cursor = conn.cursor()
+    cursor.execute("BEGIN")
+    cursor.execute("""
+        CREATE TABLE sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            night_date TEXT NOT NULL,
+            location_id INTEGER REFERENCES locations (id) ON DELETE SET NULL,
+            bortle REAL
+        );
+    """)
+    cursor.execute("""
+        CREATE TABLE observations_v4 (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id INTEGER REFERENCES sessions (id),
+            start_utc TEXT NOT NULL,
+            end_utc TEXT DEFAULT '',
+            instrument TEXT DEFAULT '',
+            sensor TEXT,
+            filter TEXT,
+            sensor_temp TEXT,
+            sub_exposure TEXT,
+            img_total INTEGER,
+            notes TEXT DEFAULT '',
+            image_raw TEXT,
+            image_processed TEXT,
+            legacy_location TEXT DEFAULT ''
+        );
+    """)
+    cursor.execute("""
+        CREATE TABLE observation_targets (
+            observation_id INTEGER NOT NULL REFERENCES observations (id) ON DELETE CASCADE,
+            target_id INTEGER NOT NULL REFERENCES targets (id) ON DELETE CASCADE,
+            altitude TEXT DEFAULT '',
+            img_good INTEGER DEFAULT 0,
+            img_pass INTEGER DEFAULT 0,
+            img_bad INTEGER DEFAULT 0,
+            notes TEXT DEFAULT '',
+            PRIMARY KEY (observation_id, target_id)
+        );
+    """)
+
+    rows = cursor.execute("""
+        SELECT id, target_id, date, obs_start, obs_end, location, altitude, sensor, filter, sensor_temp, sub_exposure,
+               img_total, img_good, img_pass, img_bad, other_objects, image_raw, image_processed, location_id
+        FROM observations
+    """).fetchall()
+    for (obs_id, target_id, date, obs_start, obs_end, location, altitude, sensor, filter_, sensor_temp, sub_exposure,
+         img_total, img_good, img_pass, img_bad, notes, image_raw, image_processed, location_id) in rows:
+        start, end = legacy_start_end(date, obs_start or "", obs_end or "")
+        session_id = find_or_create_session(cursor, night_of(start), location_id, None)
+        cursor.execute("""
+            INSERT INTO observations_v4 (id, session_id, start_utc, end_utc, sensor, filter, sensor_temp, sub_exposure,
+                                         img_total, notes, image_raw, image_processed, legacy_location)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (obs_id, session_id, start, end, sensor, filter_, sensor_temp, sub_exposure, img_total,
+              notes or "", image_raw, image_processed, "" if location_id else (location or "")))
+        if target_id is not None:
+            cursor.execute("""
+                INSERT INTO observation_targets (observation_id, target_id, altitude, img_good, img_pass, img_bad)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (obs_id, target_id, altitude or "", img_good or 0, img_pass or 0, img_bad or 0))
+
+    cursor.execute("DROP TABLE observations")
+    cursor.execute("ALTER TABLE observations_v4 RENAME TO observations")
+    problems = cursor.execute("PRAGMA foreign_key_check").fetchall()
+    if problems:
+        raise RuntimeError(f"Migration v4 : références incohérentes {problems}")
+    cursor.execute("UPDATE schema_version SET version = 4")
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys = ON;")
+
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -279,6 +411,12 @@ def init_db():
         cursor.execute("UPDATE schema_version SET version = 3")
         current_version = 3
         print("Migration vers DB v3 (lieux enregistrés) effectuée.")
+
+    # --- VERSION 4: Sessions, observations multi-cibles, dates complètes ---
+    if current_version < 4:
+        migrate_to_v4(conn)
+        current_version = 4
+        print("Migration vers DB v4 (sessions et observations multi-cibles) effectuée.")
     conn.commit()
     conn.close()
 
@@ -348,67 +486,110 @@ def save_target(target: TargetSchema):
 
 @app.delete("/api/targets/{target_id}")
 def delete_target(target_id: int):
-    conn = sqlite3.connect(DB_PATH)
+    conn = connect()
     cursor = conn.cursor()
-    cursor.execute("PRAGMA foreign_keys = ON;")
     cursor.execute("DELETE FROM targets WHERE id=?", (target_id,))
+    # Une observation qui ne vise plus aucune cible disparaît ; celles qui en gardent d'autres restent
+    cursor.execute("DELETE FROM observations WHERE id NOT IN (SELECT observation_id FROM observation_targets)")
+    delete_empty_sessions(cursor)
     conn.commit()
     conn.close()
     return {"status": "success"}
 
-@app.get("/api/targets/{target_id}/observations", response_model=List[ObservationSchema])
-def get_observations(target_id: int):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT id, target_id, date, obs_start, obs_end, location, altitude, sensor, filter, sensor_temp, sub_exposure, img_total, img_good, img_pass, img_bad, other_objects, image_raw, image_processed, location_id
-        FROM observations WHERE target_id=?
-    """, (target_id,))
-    rows = cursor.fetchall()
+OBSERVATION_COLUMNS = """
+    o.id, o.start_utc, o.end_utc, s.location_id, s.bortle, o.session_id, s.night_date, o.instrument, o.sensor,
+    o.filter, o.sensor_temp, o.sub_exposure, o.img_total, o.notes, o.image_raw, o.image_processed, o.legacy_location
+"""
+
+def observation_from_row(r, targets) -> ObservationSchema:
+    return ObservationSchema(
+        id=r[0], start=r[1], end=r[2] or "", locationId=r[3], bortle=r[4], sessionId=r[5], nightDate=r[6] or "",
+        instrument=r[7] or "", sensor=r[8] or "", filter=r[9] or "", sensorTemp=r[10] or "", subExposure=r[11] or "",
+        imgTotal=r[12] or 0, notes=r[13] or "", imageRaw=r[14] or "", imageProcessed=r[15] or "",
+        legacyLocation=r[16] or "", targets=targets,
+    )
+
+def read_observations(conn, observation_id: Optional[int] = None) -> List[ObservationSchema]:
+    where = "WHERE o.id = ?" if observation_id is not None else ""
+    params = (observation_id,) if observation_id is not None else ()
+    rows = conn.execute(f"SELECT {OBSERVATION_COLUMNS} FROM observations o LEFT JOIN sessions s ON s.id = o.session_id {where}", params).fetchall()
+    targets = {}
+    for t in conn.execute("SELECT observation_id, target_id, altitude, img_good, img_pass, img_bad, notes FROM observation_targets ORDER BY rowid"):
+        targets.setdefault(t[0], []).append(ObservationTargetSchema(
+            targetId=t[1], altitude=t[2] or "", imgGood=t[3] or 0, imgPass=t[4] or 0, imgBad=t[5] or 0, notes=t[6] or "",
+        ))
+    return [observation_from_row(r, targets.get(r[0], [])) for r in rows]
+
+@app.get("/api/observations", response_model=List[ObservationSchema])
+def get_observations():
+    conn = connect()
+    observations = read_observations(conn)
     conn.close()
-    
-    return [
-        ObservationSchema(
-            id=r[0], targetId=r[1], date=r[2], obsStart=r[3], obsEnd=r[4], location=r[5],
-            altitude=r[6], sensor=r[7], filter=r[8], sensorTemp=r[9], subExposure=r[10],
-            imgTotal=r[11], imgGood=r[12], imgPass=r[13], imgBad=r[14], otherObjects=r[15],
-            imageRaw=r[16], imageProcessed=r[17], locationId=r[18]
-        ) for r in rows
-    ]
+    return observations
 
 @app.post("/api/observations", response_model=ObservationSchema)
 def save_observation(obs: ObservationSchema):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
+    obs.start = obs.start.strip().replace("T", " ")
+    obs.end = obs.end.strip().replace("T", " ")
+    if not DATETIME_PATTERN.match(obs.start):
+        raise HTTPException(status_code=422, detail="Le début de l'observation (date et heure TU) est obligatoire.")
+    if obs.end and not DATETIME_PATTERN.match(obs.end):
+        raise HTTPException(status_code=422, detail="La fin de l'observation n'est pas une date et heure valides.")
+    if obs.end and obs.end < obs.start:
+        raise HTTPException(status_code=422, detail="La fin de l'observation précède son début.")
+    target_ids = [t.targetId for t in obs.targets]
+    if not target_ids:
+        raise HTTPException(status_code=422, detail="Ajoutez au moins une cible à l'observation.")
+    if len(set(target_ids)) != len(target_ids):
+        raise HTTPException(status_code=422, detail="Une même cible apparaît deux fois.")
+
     if obs.id and obs.id > 1000000000: # Détecte un ID temporaire JS (timestamp) pour forcer la création
         obs.id = None
-        
-    if obs.id:
-        # Mise à jour
-        cursor.execute("""
-            UPDATE observations SET date=?, obs_start=?, obs_end=?, location=?, altitude=?, sensor=?, filter=?, sensor_temp=?, sub_exposure=?, img_total=?, img_good=?, img_pass=?, img_bad=?, other_objects=?, image_raw=?, image_processed=?, location_id=?
-            WHERE id=?
-        """, (obs.date, obs.obsStart, obs.obsEnd, obs.location, obs.altitude, obs.sensor, obs.filter, obs.sensorTemp, obs.subExposure, obs.imgTotal, obs.imgGood, obs.imgPass, obs.imgBad, obs.otherObjects, obs.imageRaw, obs.imageProcessed, obs.locationId, obs.id))
-        obs_id = obs.id
-    else:
-        # Création
-        cursor.execute("""
-            INSERT INTO observations (target_id, date, obs_start, obs_end, location, altitude, sensor, filter, sensor_temp, sub_exposure, img_total, img_good, img_pass, img_bad, other_objects, image_raw, image_processed, location_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (obs.targetId, obs.date, obs.obsStart, obs.obsEnd, obs.location, obs.altitude, obs.sensor, obs.filter, obs.sensorTemp, obs.subExposure, obs.imgTotal, obs.imgGood, obs.imgPass, obs.imgBad, obs.otherObjects, obs.imageRaw, obs.imageProcessed, obs.locationId))
-        obs_id = cursor.lastrowid
-        
-    conn.commit()
-    conn.close()
-    obs.id = obs_id
-    return obs
+
+    conn = connect()
+    cursor = conn.cursor()
+    try:
+        session_id = find_or_create_session(cursor, night_of(obs.start), obs.locationId, obs.bortle)
+        values = (session_id, obs.start, obs.end, obs.instrument, obs.sensor, obs.filter, obs.sensorTemp, obs.subExposure,
+                  obs.imgTotal, obs.notes, obs.imageRaw, obs.imageProcessed)
+        if obs.id:
+            cursor.execute("""
+                UPDATE observations SET session_id=?, start_utc=?, end_utc=?, instrument=?, sensor=?, filter=?, sensor_temp=?,
+                       sub_exposure=?, img_total=?, notes=?, image_raw=?, image_processed=?
+                WHERE id=?
+            """, (*values, obs.id))
+            if cursor.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Observation introuvable.")
+            cursor.execute("DELETE FROM observation_targets WHERE observation_id=?", (obs.id,))
+            # Un lieu enregistré remplace l'ancienne saisie en texte libre
+            if obs.locationId is not None:
+                cursor.execute("UPDATE observations SET legacy_location='' WHERE id=?", (obs.id,))
+        else:
+            cursor.execute("""
+                INSERT INTO observations (session_id, start_utc, end_utc, instrument, sensor, filter, sensor_temp,
+                                          sub_exposure, img_total, notes, image_raw, image_processed)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, values)
+            obs.id = cursor.lastrowid
+        for t in obs.targets:
+            cursor.execute("""
+                INSERT INTO observation_targets (observation_id, target_id, altitude, img_good, img_pass, img_bad, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (obs.id, t.targetId, t.altitude, t.imgGood, t.imgPass, t.imgBad, t.notes))
+        delete_empty_sessions(cursor)
+        conn.commit()
+        return read_observations(conn, obs.id)[0]
+    except sqlite3.IntegrityError as err:
+        raise HTTPException(status_code=422, detail=f"Cible inconnue ou donnée incohérente : {err}")
+    finally:
+        conn.close()
 
 @app.delete("/api/observations/{obs_id}")
 def delete_observation(obs_id: int):
-    conn = sqlite3.connect(DB_PATH)
+    conn = connect()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM observations WHERE id=?", (obs_id,))
+    delete_empty_sessions(cursor)
     conn.commit()
     conn.close()
     return {"status": "success"}

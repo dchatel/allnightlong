@@ -1,33 +1,9 @@
 <script lang="ts">
-	import { appState, parseLegacyCoords } from '$lib/state.svelte';
+	import { appState, parseLegacyCoords, emptyObservationTarget, formatDate, formatDateTime, type ObservationTarget } from '$lib/state.svelte';
 	import { fade, slide } from 'svelte/transition';
 	import ImagePicker from '$lib/components/ImagePicker.svelte';
 
 	let obs = $derived(appState.activeObservation);
-
-	// --- CALCULS DU GRAPHIQUE SVG (ANNEAU ÉPAIS ANIMÉ) ---
-	let goodCount = $derived(Number(fieldValue('imgGood')) || 0);
-	let passCount = $derived(Number(fieldValue('imgPass')) || 0);
-	let badCount = $derived(Number(fieldValue('imgBad')) || 0);
-	let totalGraded = $derived(goodCount + passCount + badCount);
-
-	let goodPct = $derived(totalGraded === 0 ? 0 : (goodCount / totalGraded) * 100);
-	let passPct = $derived(totalGraded === 0 ? 0 : (passCount / totalGraded) * 100);
-	let badPct = $derived(totalGraded === 0 ? 0 : (badCount / totalGraded) * 100);
-
-	// On ajoute un gap (2%) uniquement s'il y a plus d'une catégorie utilisée
-	let activeSegments = $derived((goodCount > 0 ? 1 : 0) + (passCount > 0 ? 1 : 0) + (badCount > 0 ? 1 : 0));
-	let gap = $derived(activeSegments > 1 ? 2 : 0);
-
-	// Longueur de chaque segment (on soustrait le gap pour faire la coupure)
-	let goodDash = $derived(goodPct > gap ? goodPct - gap : goodPct);
-	let passDash = $derived(passPct > gap ? passPct - gap : passPct);
-	let badDash = $derived(badPct > gap ? badPct - gap : badPct);
-
-	// Position de départ de chaque segment sur le cercle
-	let passOffset = $derived(-goodPct);
-	let badOffset = $derived(-(goodPct + passPct));
-	// ------------------------------------------------------
 
 	// Lecture : source = obs (original) hors édition, observationForm pendant l'édition.
 	// Écriture : toujours vers observationForm — jamais l'original tant que ce n'est
@@ -39,6 +15,9 @@
 		return (v: any) => { appState.observationForm[key] = v; };
 	}
 
+	let rows = $derived<ObservationTarget[]>(fieldValue('targets') ?? []);
+
+	// --- LIEU ---
 	const NEW_LOCATION = 'new';
 	let selectedLocation = $derived(appState.locationById(fieldValue('locationId')));
 
@@ -51,9 +30,66 @@
 		select.value = String(fieldValue('locationId') ?? '');
 		// La carte s'ouvre sur les coordonnées déjà saisies en texte libre, s'il y en a
 		appState.openLocationEditor(
-			{ ...(parseLegacyCoords(fieldValue('location')) ?? {}) },
+			{ ...(parseLegacyCoords(fieldValue('legacyLocation')) ?? {}) },
 			(saved) => setField('locationId')(saved.id)
 		);
+	}
+
+	// Bortle de la nuit, sinon celui du lieu
+	let bortle = $derived(fieldValue('bortle') ?? selectedLocation?.bortle ?? null);
+
+	// --- DATES (TU) ---
+	// Le champ datetime-local lit et écrit "AAAA-MM-JJTHH:MM" ; la base stocke "AAAA-MM-JJ HH:MM"
+	function toInput(value: string) {
+		return (value ?? '').replace(' ', 'T');
+	}
+	function setStart(value: string) {
+		const start = value.replace('T', ' ');
+		setField('start')(start);
+		// Fin pré-remplie le même jour : il ne reste souvent qu'à changer l'heure (et le jour après minuit)
+		if (!fieldValue('end') && start) setField('end')(start);
+	}
+
+	// --- CIBLES ---
+	function addTarget() {
+		appState.observationForm.targets = [...rows, emptyObservationTarget()];
+	}
+	function removeTarget(index: number) {
+		appState.observationForm.targets = rows.filter((_, i) => i !== index);
+	}
+	// Une cible déjà présente dans une autre ligne n'est pas proposée
+	function choices(index: number) {
+		const used = new Set(rows.filter((_, i) => i !== index).map(r => r.targetId));
+		return appState.targetsByName.filter(t => !used.has(t.id));
+	}
+	const NEW_TARGET = 'new';
+
+	function chooseTarget(row: ObservationTarget, select: HTMLSelectElement) {
+		if (select.value !== NEW_TARGET) {
+			row.targetId = select.value ? Number(select.value) : null;
+			return;
+		}
+		// La liste revient sur la cible actuelle : la nouvelle n'est choisie qu'une fois créée
+		select.value = String(row.targetId ?? '');
+		appState.openTargetCreator((saved) => (row.targetId = saved.id));
+	}
+
+	// Rappel de la cible sous son nom : nom usuel, constellation, type
+	function targetSummary(target: any) {
+		return [target.usualName, target.constellation, target.type].filter(Boolean).join(' · ');
+	}
+
+	// Temps d'acquisition : toutes les poses prises, retenues ou non
+	let totalDuration = $derived(((Number(fieldValue('imgTotal')) || 0) * (Number(fieldValue('subExposure')) || 0)) / 60);
+
+	// Temps de pose retenu pour cette cible
+	function duration(row: ObservationTarget) {
+		const minutes = ((Number(row.imgGood) || 0) * (Number(fieldValue('subExposure')) || 0)) / 60;
+		return minutes ? `${minutes.toFixed(1)} min` : '—';
+	}
+
+	function total(row: ObservationTarget) {
+		return (Number(row.imgGood) || 0) + (Number(row.imgPass) || 0) + (Number(row.imgBad) || 0);
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
@@ -87,13 +123,16 @@
 		>
 			<!-- Header -->
 			<div class="h-14 border-b border-[#333] bg-[#1a1a1d] px-6 flex items-center justify-between shrink-0 select-none">
-				<div class="flex items-center space-x-3">
+				<div class="flex items-center space-x-3 min-w-0">
 					<span class="text-xl">🔭</span>
-					<h2 class="text-sm font-bold uppercase tracking-widest text-white">
-						Rapport du {fieldValue('date')}
+					<h2 class="text-sm font-bold uppercase tracking-widest text-white truncate">
+						Rapport du {formatDate(fieldValue('start')) || '…'}
+						{#if appState.observationTargetNames({ targets: rows })}
+							<span class="text-indigo-300"> — {appState.observationTargetNames({ targets: rows })}</span>
+						{/if}
 					</h2>
 				</div>
-				<div class="flex items-center space-x-2">
+				<div class="flex items-center space-x-2 shrink-0">
 					{#if appState.isEditingObservation}
 						<button onclick={() => appState.saveObservation()} class="btn-primary text-xs">Enregistrer</button>
 						<button onclick={() => appState.cancelEditObservation()} class="btn-secondary text-xs">Annuler</button>
@@ -115,213 +154,228 @@
 				<div class="grid grid-cols-1 xl:grid-cols-12 gap-8 flex-1">
 
 					<div class="xl:col-span-8 flex flex-col gap-6">
-						<div class="grid grid-cols-1 md:grid-cols-3 gap-6 shrink-0">
+						<div class="grid grid-cols-1 md:grid-cols-2 gap-6 shrink-0">
 
 							<!-- SESSION -->
 							<div class="space-y-4 bg-[#1e1e21] p-4 rounded-lg border border-[#333]">
 								<span class="text-[10px] uppercase font-bold text-surface-400 block border-b border-[#333] pb-1.5">1. Session</span>
-								<div>
-									<label for="obs-date" class="block text-[10px] text-surface-400 mb-1">Date</label>
-									{#if appState.isEditingObservation}
-										<input id="obs-date" type="date" class="form-input" value={fieldValue('date')} oninput={(e) => setField('date')(e.currentTarget.value)} />
-									{:else}
-										<span id="obs-date" class="block text-sm text-white">{fieldValue('date')}</span>
-									{/if}
+								<div class="grid grid-cols-[minmax(0,1fr)_6.5rem] gap-2">
+									<div>
+										<label for="obs-location" class="block text-[10px] text-surface-400 mb-1">Lieu</label>
+										{#if appState.isEditingObservation}
+											<div class="flex gap-1">
+												<select
+													id="obs-location"
+													class="form-input flex-1 min-w-0"
+													value={fieldValue('locationId') ?? ''}
+													onchange={(e) => chooseLocation(e.currentTarget)}
+												>
+													<option value="">— Aucun lieu —</option>
+													{#each appState.locations as location (location.id)}
+														<option value={location.id}>{location.label}</option>
+													{/each}
+													<option value={NEW_LOCATION}>+ Nouveau lieu…</option>
+												</select>
+												{#if selectedLocation}
+													<button
+														type="button"
+														title="Modifier ce lieu"
+														onclick={() => appState.openLocationEditor({ ...selectedLocation })}
+														class="btn-secondary text-xs px-2"
+													>✎</button>
+												{/if}
+											</div>
+											{#if !selectedLocation && fieldValue('legacyLocation')}
+												<span class="block text-[10px] text-surface-500 mt-1">Ancienne saisie : {fieldValue('legacyLocation')}</span>
+											{/if}
+										{:else}
+											<span id="obs-location" class="block text-sm text-white">{appState.locationText(obs) || '—'}</span>
+										{/if}
+									</div>
+									<div>
+										<label for="obs-bortle" class="block text-[10px] text-surface-400 mb-1">Bortle (nuit)</label>
+										{#if appState.isEditingObservation}
+											<input
+												id="obs-bortle"
+												type="number"
+												step="0.5"
+												min="1"
+												max="9"
+												class="form-input"
+												value={fieldValue('bortle') ?? ''}
+												placeholder={selectedLocation?.bortle != null ? `${selectedLocation.bortle} (lieu)` : ''}
+												oninput={(e) => setField('bortle')(e.currentTarget.value === '' ? null : Number(e.currentTarget.value))}
+											/>
+										{:else}
+											<span id="obs-bortle" class="block text-sm text-white">{bortle ?? '—'}</span>
+										{/if}
+									</div>
 								</div>
 								<div class="grid grid-cols-2 gap-2">
 									<div>
-										<label for="obs-obsStart" class="block text-[10px] text-surface-400 mb-1">Début</label>
+										<label for="obs-start" class="block text-[10px] text-surface-400 mb-1">Début (TU)</label>
 										{#if appState.isEditingObservation}
-											<input id="obs-obsStart" type="time" class="form-input" value={fieldValue('obsStart')} oninput={(e) => setField('obsStart')(e.currentTarget.value)} />
+											<input id="obs-start" type="datetime-local" class="form-input px-1.5" value={toInput(fieldValue('start'))} oninput={(e) => setStart(e.currentTarget.value)} />
 										{:else}
-											<span id="obs-obsStart" class="block text-sm text-white">{fieldValue('obsStart') || '—'}</span>
+											<span id="obs-start" class="block text-sm text-white">{formatDateTime(fieldValue('start')) || '—'}</span>
 										{/if}
 									</div>
 									<div>
-										<label for="obs-obsEnd" class="block text-[10px] text-surface-400 mb-1">Fin</label>
+										<label for="obs-end" class="block text-[10px] text-surface-400 mb-1">Fin (TU)</label>
 										{#if appState.isEditingObservation}
-											<input id="obs-obsEnd" type="time" class="form-input" value={fieldValue('obsEnd')} oninput={(e) => setField('obsEnd')(e.currentTarget.value)} />
+											<input id="obs-end" type="datetime-local" class="form-input px-1.5" value={toInput(fieldValue('end'))} oninput={(e) => setField('end')(e.currentTarget.value.replace('T', ' '))} />
 										{:else}
-											<span id="obs-obsEnd" class="block text-sm text-white">{fieldValue('obsEnd') || '—'}</span>
+											<span id="obs-end" class="block text-sm text-white">{formatDateTime(fieldValue('end')) || '—'}</span>
 										{/if}
 									</div>
 								</div>
-								<div>
-									<label for="obs-location" class="block text-[10px] text-surface-400 mb-1">Lieu</label>
-									{#if appState.isEditingObservation}
-										<div class="flex gap-1">
-											<select
-												id="obs-location"
-												class="form-input flex-1 min-w-0"
-												value={fieldValue('locationId') ?? ''}
-												onchange={(e) => chooseLocation(e.currentTarget)}
-											>
-												<option value="">— Aucun lieu —</option>
-												{#each appState.locations as location (location.id)}
-													<option value={location.id}>{location.label}</option>
-												{/each}
-												<option value={NEW_LOCATION}>+ Nouveau lieu…</option>
-											</select>
-											{#if selectedLocation}
-												<button
-													type="button"
-													title="Modifier ce lieu"
-													onclick={() => appState.openLocationEditor({ ...selectedLocation })}
-													class="btn-secondary text-xs px-2"
-												>✎</button>
+							</div>
+
+							<!-- MATÉRIEL & POSE -->
+							<div class="bg-[#1e1e21] p-4 rounded-lg border border-[#333]">
+								<span class="text-[10px] uppercase font-bold text-surface-400 block border-b border-[#333] pb-1.5 mb-4">2. Matériel</span>
+								<div class="grid grid-cols-2 gap-x-3 gap-y-4">
+									{#each [
+										{ key: 'instrument', label: 'Instrument (facultatif)' },
+										{ key: 'sensor', label: 'Capteur' },
+										{ key: 'filter', label: 'Filtre' },
+										{ key: 'sensorTemp', label: 'Temp. Capteur (°C)' }
+									] as field (field.key)}
+										<div>
+											<label for="obs-{field.key}" class="block text-[10px] text-surface-400 mb-1">{field.label}</label>
+											{#if appState.isEditingObservation}
+												<input id="obs-{field.key}" type="text" class="form-input" value={fieldValue(field.key)} oninput={(e) => setField(field.key)(e.currentTarget.value)} />
+											{:else}
+												<span id="obs-{field.key}" class="block text-sm text-white">{fieldValue(field.key) || '—'}</span>
 											{/if}
 										</div>
-										{#if !selectedLocation && fieldValue('location')}
-											<span class="block text-[10px] text-surface-500 mt-1">Ancienne saisie : {fieldValue('location')}</span>
-										{/if}
-									{:else if selectedLocation}
-										<span id="obs-location" class="block text-sm text-white">{selectedLocation.label}</span>
-										{#if selectedLocation.bortle != null}
-											<span class="block text-[10px] text-surface-400">Bortle {selectedLocation.bortle}</span>
-										{/if}
-									{:else}
-										<span id="obs-location" class="block text-sm text-white">{fieldValue('location') || '—'}</span>
-									{/if}
-								</div>
-								<div>
-									<label for="obs-altitude" class="block text-[10px] text-surface-400 mb-1">Hauteur de cible (°)</label>
-									{#if appState.isEditingObservation}
-										<input id="obs-altitude" type="text" class="form-input" value={fieldValue('altitude')} oninput={(e) => setField('altitude')(e.currentTarget.value)} />
-									{:else}
-										<span id="obs-altitude" class="block text-sm text-white">{fieldValue('altitude') || '—'}</span>
-									{/if}
+									{/each}
 								</div>
 							</div>
-
-							<!-- POSE -->
-							<div class="space-y-4 bg-[#1e1e21] p-4 rounded-lg border border-[#333]">
-								<span class="text-[10px] uppercase font-bold text-surface-400 block border-b border-[#333] pb-1.5">2. Matériel & Pose</span>
-								<div>
-									<label for="obs-sensor" class="block text-[10px] text-surface-400 mb-1">Capteur</label>
-									{#if appState.isEditingObservation}
-										<input id="obs-sensor" type="text" class="form-input" value={fieldValue('sensor')} oninput={(e) => setField('sensor')(e.currentTarget.value)} />
-									{:else}
-										<span id="obs-sensor" class="block text-sm text-white">{fieldValue('sensor') || '—'}</span>
-									{/if}
-								</div>
-								<div>
-									<label for="obs-filter" class="block text-[10px] text-surface-400 mb-1">Filtre</label>
-									{#if appState.isEditingObservation}
-										<input id="obs-filter" type="text" class="form-input" value={fieldValue('filter')} oninput={(e) => setField('filter')(e.currentTarget.value)} />
-									{:else}
-										<span id="obs-filter" class="block text-sm text-white">{fieldValue('filter') || '—'}</span>
-									{/if}
-								</div>
-								<div>
-									<label for="obs-sensorTemp" class="block text-[10px] text-surface-400 mb-1">Temp. Capteur (°C)</label>
-									{#if appState.isEditingObservation}
-										<input id="obs-sensorTemp" type="text" class="form-input" value={fieldValue('sensorTemp')} oninput={(e) => setField('sensorTemp')(e.currentTarget.value)} />
-									{:else}
-										<span id="obs-sensorTemp" class="block text-sm text-white">{fieldValue('sensorTemp') || '—'}</span>
-									{/if}
-								</div>
-								<div>
-									<label for="obs-subExposure" class="block text-[10px] text-surface-400 mb-1">Pose indiv. (s)</label>
-									{#if appState.isEditingObservation}
-										<input id="obs-subExposure" type="text" class="form-input" value={fieldValue('subExposure')} oninput={(e) => setField('subExposure')(e.currentTarget.value)} />
-									{:else}
-										<span id="obs-subExposure" class="block text-sm text-white">{fieldValue('subExposure') || '—'}</span>
-									{/if}
-								</div>
-							</div>
-
-							<!-- IMAGES STATS -->
-							<div class="space-y-4 bg-[#1e1e21] p-4 rounded-lg border border-[#333]">
-								<span class="text-[10px] uppercase font-bold text-surface-400 block border-b border-[#333] pb-1.5">3. Images</span>
-								<div class="grid grid-cols-2 gap-2">
-									<div>
-										<label for="obs-imgTotal" class="block text-[10px] text-surface-400 mb-1">Total</label>
-										{#if appState.isEditingObservation}
-											<input id="obs-imgTotal" type="number" class="form-input" value={fieldValue('imgTotal')} oninput={(e) => setField('imgTotal')(Number(e.currentTarget.value))} />
-										{:else}
-											<span id="obs-imgTotal" class="block text-sm text-white">{fieldValue('imgTotal') ?? 0}</span>
-										{/if}
-									</div>
-									<div>
-										<span class="block text-[10px] text-indigo-400 mb-1 font-bold">Lights</span>
-										<span class="block text-sm font-bold text-indigo-400">{appState.calculatedLightImages}</span>
-									</div>
-								</div>
-								<div class="grid grid-cols-3 gap-1 text-[9px]">
-									<div>
-										<label for="obs-imgGood" class="block text-[9px] text-green-400 mb-1">Bon</label>
-										{#if appState.isEditingObservation}
-											<input id="obs-imgGood" type="number" class="form-input px-1" value={fieldValue('imgGood')} oninput={(e) => setField('imgGood')(Number(e.currentTarget.value))} />
-										{:else}
-											<span class="block text-sm text-green-400">{fieldValue('imgGood') ?? 0}</span>
-										{/if}
-									</div>
-									<div>
-										<label for="obs-imgPass" class="block text-[9px] text-yellow-500 mb-1">Pass</label>
-										{#if appState.isEditingObservation}
-											<input id="obs-imgPass" type="number" class="form-input px-1" value={fieldValue('imgPass')} oninput={(e) => setField('imgPass')(Number(e.currentTarget.value))} />
-										{:else}
-											<span class="block text-sm text-yellow-500">{fieldValue('imgPass') ?? 0}</span>
-										{/if}
-									</div>
-									<div>
-										<label for="obs-imgBad" class="block text-[9px] text-red-500 mb-1">Bad</label>
-										{#if appState.isEditingObservation}
-											<input id="obs-imgBad" type="number" class="form-input px-1" value={fieldValue('imgBad')} oninput={(e) => setField('imgBad')(Number(e.currentTarget.value))} />
-										{:else}
-											<span class="block text-sm text-red-500">{fieldValue('imgBad') ?? 0}</span>
-										{/if}
-									</div>
-								</div>
-								<div class="border-t border-[#333] pt-4 mt-2 flex items-center gap-6">
-									<!-- GRAPHIQUE (Anneau très épais en bas à gauche) -->
-									<div class="w-16 h-16 shrink-0 relative drop-shadow-md">
-										<!-- 
-											Astuce mathématique : Un cercle de rayon 15.9155 a une circonférence exacte de 100.
-											Cela permet de mapper directement nos pourcentages (0 à 100) sur le stroke-dasharray !
-										-->
-										<svg viewBox="0 0 44 44" class="w-full h-full transform -rotate-90">
-											<!-- Fond / Cercle vide (gris) -->
-											<circle cx="22" cy="22" r="15.9155" fill="transparent" class="stroke-[#2a2a2e]" stroke-width="12" />
-											
-											<!-- Segment : Bon (Vert) -->
-											<circle cx="22" cy="22" r="15.9155" fill="transparent" class="stroke-green-400" stroke-width="12" 
-												stroke-dasharray="{goodDash} 100" stroke-dashoffset="0" 
-												style="transition: stroke-dasharray 0.6s cubic-bezier(0.4, 0, 0.2, 1), stroke-dashoffset 0.6s cubic-bezier(0.4, 0, 0.2, 1);" />
-												
-											<!-- Segment : Pass (Jaune) -->
-											<circle cx="22" cy="22" r="15.9155" fill="transparent" class="stroke-yellow-500" stroke-width="12" 
-												stroke-dasharray="{passDash} 100" stroke-dashoffset="{passOffset}" 
-												style="transition: stroke-dasharray 0.6s cubic-bezier(0.4, 0, 0.2, 1), stroke-dashoffset 0.6s cubic-bezier(0.4, 0, 0.2, 1);" />
-												
-											<!-- Segment : Bad (Rouge) -->
-											<circle cx="22" cy="22" r="15.9155" fill="transparent" class="stroke-red-500" stroke-width="12" 
-												stroke-dasharray="{badDash} 100" stroke-dashoffset="{badOffset}" 
-												style="transition: stroke-dasharray 0.6s cubic-bezier(0.4, 0, 0.2, 1), stroke-dashoffset 0.6s cubic-bezier(0.4, 0, 0.2, 1);" />
-										</svg>
-										
-										<!-- Petit label central optionnel (ex: % total, ou on le laisse vide) -->
-										{#if totalGraded === 0}
-											<div class="absolute inset-0 flex items-center justify-center text-[10px] text-surface-500">?</div>
-										{/if}
-									</div>
-
-									<!-- TEXTE DURÉE TOTALE (Décalé sur la droite) -->
-									<div class="flex flex-col">
-										<span class="text-[10px] text-surface-400 mb-1">Durée totale</span>
-										<span class="text-xl font-black text-white">{appState.calculatedDuration.toFixed(1)} <span class="text-xs text-surface-400 font-bold">min</span></span>
-									</div>
-								</div>
-							</div>
-
 						</div>
 
-						<div class="flex-1 flex flex-col min-h-0">
-							<label for="obs-otherObjects" class="block text-xs text-surface-400 mb-1 shrink-0">Autres objets dans le champ / Notes</label>
+						<!-- CIBLES DU CHAMP -->
+						<div class="bg-[#1e1e21] p-4 rounded-lg border border-[#333] shrink-0">
+							<div class="flex items-end justify-between gap-4 border-b border-[#333] pb-1.5 mb-2">
+								<span class="text-[10px] uppercase font-bold text-surface-400 whitespace-nowrap">Cibles du champ</span>
+								<!-- Total des poses × pose individuelle = durée totale d'acquisition -->
+								<div class="flex items-center gap-2 text-[10px] text-surface-400 whitespace-nowrap">
+									<label for="obs-imgTotal">Total des poses</label>
+									{#if appState.isEditingObservation}
+										<input id="obs-imgTotal" type="number" min="0" class="form-input py-0.5" style="width: 5rem" value={fieldValue('imgTotal')} oninput={(e) => setField('imgTotal')(Number(e.currentTarget.value))} />
+									{:else}
+										<span id="obs-imgTotal" class="text-sm font-bold text-white">{fieldValue('imgTotal') ?? 0}</span>
+									{/if}
+									<span class="text-sm text-surface-500">×</span>
+									<label for="obs-subExposure">Pose indiv.</label>
+									{#if appState.isEditingObservation}
+										<input id="obs-subExposure" type="text" class="form-input py-0.5" style="width: 3.5rem" value={fieldValue('subExposure')} oninput={(e) => setField('subExposure')(e.currentTarget.value)} />
+									{:else}
+										<span id="obs-subExposure" class="text-sm font-bold text-white">{fieldValue('subExposure') || '—'}</span>
+									{/if}
+									<span>s</span>
+									<span class="text-sm text-surface-500">=</span>
+									<span>Durée totale</span>
+									<span class="text-sm font-black text-white">{totalDuration.toFixed(1)} min</span>
+								</div>
+							</div>
+							<div class="grid grid-cols-[minmax(0,1.6fr)_minmax(0,0.7fr)_repeat(3,minmax(0,0.55fr))_minmax(0,0.6fr)_auto] gap-x-2 gap-y-1 items-center">
+								<span class="text-[10px] text-surface-400">Cible</span>
+								<span class="text-[10px] text-surface-400">Hauteur (°)</span>
+								<span class="text-[10px] text-green-400">Bon</span>
+								<span class="text-[10px] text-yellow-500">Pass</span>
+								<span class="text-[10px] text-red-500">Bad</span>
+								<span class="text-[10px] text-surface-400" title="Poses retenues × pose individuelle">Durée retenue</span>
+								<span></span>
+
+								{#each rows as row, i (i)}
+									{@const target = appState.targets.find(t => t.id === row.targetId)}
+									{#if appState.isEditingObservation}
+										<div class="min-w-0">
+											<div class="flex gap-1">
+											<select
+												class="form-input flex-1 min-w-0"
+												value={row.targetId ?? ''}
+												onchange={(e) => chooseTarget(row, e.currentTarget)}
+											>
+												<option value="">— Choisir une cible —</option>
+												{#each choices(i) as choice (choice.id)}
+													<option value={choice.id}>{choice.name}{choice.usualName ? ` (${choice.usualName})` : ''}</option>
+												{/each}
+												<option value={NEW_TARGET}>+ Nouvelle cible…</option>
+											</select>
+											{#if target}
+												<button type="button" title="Voir la fiche de la cible" onclick={() => appState.openTargetSheet(target.id)} class="btn-secondary text-xs px-2">ⓘ</button>
+											{/if}
+											</div>
+											{#if target}
+												<span class="block text-[10px] text-surface-500 truncate mt-0.5">{targetSummary(target)}</span>
+											{/if}
+										</div>
+										<input type="text" class="form-input" bind:value={row.altitude} />
+										<input type="number" min="0" class="form-input px-1" bind:value={row.imgGood} />
+										<input type="number" min="0" class="form-input px-1" bind:value={row.imgPass} />
+										<input type="number" min="0" class="form-input px-1" bind:value={row.imgBad} />
+										<span class="text-sm text-surface-300">{duration(row)}</span>
+										<button type="button" title="Retirer cette cible" onclick={() => removeTarget(i)} class="text-red-400 hover:text-red-300 px-1">✕</button>
+										<input
+											type="text"
+											class="form-input col-span-6 mb-2"
+											placeholder="Note pour cette cible (facultatif)"
+											bind:value={row.notes}
+										/>
+										<span></span>
+									{:else}
+										<div class="min-w-0">
+											{#if target}
+												<button
+													type="button"
+													title="Voir la fiche de la cible"
+													onclick={() => appState.openTargetSheet(target.id)}
+													class="text-sm font-bold text-white hover:text-indigo-300 underline decoration-dotted underline-offset-4"
+												>{target.name}</button>
+												<span class="block text-[10px] text-surface-400 leading-snug">{targetSummary(target)}</span>
+											{:else}
+												<span class="text-sm text-surface-500">Cible inconnue</span>
+											{/if}
+										</div>
+										<span class="text-sm text-white">{row.altitude || '—'}</span>
+										<div class="col-span-3">
+											<span class="text-sm">
+												<span class="text-green-400">{row.imgGood}</span> /
+												<span class="text-yellow-500">{row.imgPass}</span> /
+												<span class="text-red-500">{row.imgBad}</span>
+											</span>
+											{#if total(row) > 0}
+												<div class="flex gap-0.5 mt-1 h-1.5 rounded-full overflow-hidden">
+													<div class="bg-green-400" style="flex: {row.imgGood || 0}"></div>
+													<div class="bg-yellow-500" style="flex: {row.imgPass || 0}"></div>
+													<div class="bg-red-500" style="flex: {row.imgBad || 0}"></div>
+												</div>
+											{/if}
+										</div>
+										<span class="text-sm text-white">{duration(row)}</span>
+										<span></span>
+										{#if row.notes}
+											<p class="col-span-7 text-xs text-surface-300 whitespace-pre-wrap -mt-0.5 mb-1.5">Note : {row.notes}</p>
+										{/if}
+									{/if}
+								{/each}
+							</div>
 							{#if appState.isEditingObservation}
-								<textarea id="obs-otherObjects" class="form-input flex-1 min-h-24 resize-none py-2" value={fieldValue('otherObjects')} oninput={(e) => setField('otherObjects')(e.currentTarget.value)}></textarea>
+								<button type="button" onclick={addTarget} class="mt-1 text-xs font-bold text-indigo-400 hover:text-indigo-300">+ Ajouter une cible</button>
+							{:else if rows.length === 0}
+								<p class="text-xs text-surface-500">Aucune cible.</p>
+							{/if}
+						</div>
+
+						<!-- NOTES DE SÉANCE -->
+						<div class="flex-1 flex flex-col min-h-0">
+							<label for="obs-notes" class="block text-xs text-surface-400 mb-1 shrink-0">Notes de la séance</label>
+							{#if appState.isEditingObservation}
+								<textarea id="obs-notes" class="form-input flex-1 min-h-24 resize-none py-2" value={fieldValue('notes')} oninput={(e) => setField('notes')(e.currentTarget.value)}></textarea>
 							{:else}
-								<p id="obs-otherObjects" class="text-sm text-white whitespace-pre-wrap flex-1 overflow-y-auto min-h-12">{fieldValue('otherObjects') || '—'}</p>
+								<p id="obs-notes" class="text-sm text-white whitespace-pre-wrap flex-1 overflow-y-auto min-h-12">{fieldValue('notes') || '—'}</p>
 							{/if}
 						</div>
 					</div>

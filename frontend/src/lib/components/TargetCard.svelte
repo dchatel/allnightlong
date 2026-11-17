@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { appState } from '$lib/state.svelte';
-	import ImagePicker from '$lib/components/ImagePicker.svelte';
+	import TargetFields from '$lib/components/TargetFields.svelte';
 	import Input from './Input.svelte';
 
     let target = $derived(appState.activeTarget!);
@@ -48,113 +48,10 @@
 	</div>
 
 	<!-- ================= CORPS (2 Colonnes) ================= -->
-	<div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
-		
-		<!-- Colonne de gauche : Détails et Notes -->
-		<div class="lg:col-span-9 space-y-5">
-
-			<div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
-				<div>
-					<label for="target-constellation" class="text-surface-400 block mb-1">Constellation</label>
-					{#if appState.isEditingTarget}
-						<Input id="target-constellation" isEditing={appState.isEditingTarget} class="form-input" value={fieldValue('constellation')} onchange={setField('constellation')} />
-					{:else}
-						<span id="target-constellation">{fieldValue('constellation')}</span>
-					{/if}
-				</div>
-				<div>
-					<label for="target-otherDesignations" class="text-surface-400 block mb-1">Désignations</label>
-					{#if appState.isEditingTarget}
-						<Input id="target-otherDesignations" isEditing={appState.isEditingTarget} class="form-input" value={fieldValue('otherDesignations')} onchange={setField('otherDesignations')} />
-					{:else}
-						<span id="target-otherDesignations">{fieldValue('otherDesignations')}</span>
-					{/if}
-				</div>
-				<div>
-					<label for="target-type" class="text-surface-400 block mb-1">Type d'objet</label>
-					{#if appState.isEditingTarget}
-						<Input id="target-type" isEditing={appState.isEditingTarget} class="form-input" value={fieldValue('type')} onchange={setField('type')} />
-					{:else}
-						<span id="target-type">{fieldValue('type')}</span>
-					{/if}
-				</div>
-				<div>
-					<label for="target-magnitude" class="text-surface-400 block mb-1">Magnitude</label>
-					{#if appState.isEditingTarget}
-						<Input id="target-magnitude" isEditing={appState.isEditingTarget} class="form-input" value={fieldValue('magnitude')} onchange={setField('magnitude')} />
-					{:else}
-						<span id="target-magnitude">{fieldValue('magnitude')}</span>
-					{/if}
-				</div>
-				<div>
-					<label for="target-surfBrightness" class="text-surface-400 block mb-1">Brillance surf.</label>
-					{#if appState.isEditingTarget}
-						<Input id="target-surfBrightness" isEditing={appState.isEditingTarget} class="form-input" value={fieldValue('surfBrightness')} onchange={setField('surfBrightness')} />
-					{:else}
-						<span id="target-surfBrightness">{fieldValue('surfBrightness')}</span>
-					{/if}
-				</div>
-				<div>
-					<label for="target-size" class="text-surface-400 block mb-1">Taille</label>
-					{#if appState.isEditingTarget}
-						<Input id="target-size" isEditing={appState.isEditingTarget} class="form-input" value={fieldValue('size')} onchange={setField('size')} />
-					{:else}
-						<span id="target-size">{fieldValue('size')}</span>
-					{/if}
-				</div>
-				<div>
-					<label for="target-ra" class="text-surface-400 block mb-1">Coordonnées AD</label>
-					{#if appState.isEditingTarget}
-						<Input id="target-ra" isEditing={appState.isEditingTarget} class="form-input" value={fieldValue('ra')} onchange={setField('ra')} />
-					{:else}
-						<span id="target-ra">{fieldValue('ra')}</span>
-					{/if}
-				</div>
-				<div>
-					<label for="target-dec" class="text-surface-400 block mb-1">Coordonnées DEC</label>
-					{#if appState.isEditingTarget}
-						<Input id="target-dec" isEditing={appState.isEditingTarget} class="form-input" value={fieldValue('dec')} onchange={setField('dec')} />
-					{:else}
-						<span id="target-dec">{fieldValue('dec')}</span>
-					{/if}
-				</div>
-			</div>
-
-			<div>
-				<label for="target-notes" class="text-surface-400 block mb-1 text-xs">Notes / Description libre</label>
-				{#if appState.isEditingTarget}
-					<textarea 
-						id="target-notes" 
-						class="w-full form-input rounded p-2 text-white text-sm focus:outline-none focus:border-primary-500 resize-y min-h-24"
-						value={fieldValue('notes')}
-						oninput={(e) => setField('notes')(e.currentTarget.value)}
-						placeholder="Ajoutez vos notes personnelles sur cette cible..."
-					></textarea>
-				{:else}
-					<!-- En mode lecture, 'whitespace-pre-wrap' permet de respecter les sauts de ligne -->
-					<div id="target-notes" class="text-sm whitespace-pre-wrap p-3 min-h-12">
-						{#if fieldValue('notes')}
-							{fieldValue('notes')}
-						{:else}
-							<em class="text-surface-500">Aucune note.</em>
-						{/if}
-					</div>
-				{/if}
-			</div>
-		</div>
-
-		<!-- Image étirable -->
-		<div class="lg:col-span-3 relative h-52 flex flex-col overflow-hidden rounded-lg">
-			<ImagePicker
-				title="Image de référence"
-				imageUrl={fieldValue('imageRef')}
-				onchange={setField('imageRef')}
-				isEditing={appState.isEditingTarget}
-				viewOverlayText="Explorer la carte céleste"
-				viewOverlayIcon="🌌"
-				onViewClick={() => appState.showMapModal = true}
-			/>
-		</div>
-
-	</div>
+	<TargetFields
+		values={appState.isEditingTarget ? appState.targetForm : target}
+		isEditing={appState.isEditingTarget}
+		onfield={(key, value) => setField(key)(value)}
+		onViewClick={() => appState.showMapModal = true}
+	/>
 </section>
