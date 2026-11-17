@@ -2,6 +2,8 @@
 	import { appState, IMAGE_KINDS, imageTitle, imageSrc, type ObservationImage, type ObservationTarget } from '$lib/state.svelte';
 	import { open } from '@tauri-apps/plugin-dialog';
 	import { fade } from 'svelte/transition';
+	import ImageFrame from '$lib/components/ImageFrame.svelte';
+	import ImagePicker from '$lib/components/ImagePicker.svelte';
 
 	// Images d'une observation, dans la colonne de droite du rapport.
 	// filterTargetId : cible choisie (bouton ou ligne du tableau des cibles), null = toutes.
@@ -90,17 +92,9 @@
 		selectedIndex = images.length;
 	}
 
-	async function replaceFile(image: ObservationImage) {
-		const picked = await open({
-			multiple: false,
-			title: 'Remplacer le fichier de cette image',
-			defaultPath: appState.settings.imagesFolder || undefined,
-			filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'tif', 'tiff'] }]
-		});
-		if (typeof picked === 'string') {
-			image.path = picked;
-			image.missing = false;
-		}
+	function replaceFile(image: ObservationImage, path: string) {
+		image.path = path;
+		image.missing = false;
 	}
 
 	function remove(index: number) {
@@ -122,17 +116,6 @@
 
 <svelte:window onkeydowncapture={handleKeydown} />
 
-{#snippet picture(image: ObservationImage, heightClass: string)}
-	{#if image.missing}
-		<div class="{heightClass} w-full rounded bg-black/30 border border-dashed border-[#444] flex flex-col items-center justify-center text-center p-2">
-			<span class="text-[11px] font-bold text-surface-400">Image introuvable</span>
-			<span class="text-[9px] text-surface-500 break-all mt-1">{image.path}</span>
-		</div>
-	{:else}
-		<img src={imageSrc(image.path)} alt={imageTitle(image)} class="{heightClass} w-full object-contain rounded bg-black/30" />
-	{/if}
-{/snippet}
-
 {#if isEditing}
 	<!-- ================= MODIFICATION ================= -->
 	<div class="flex flex-col gap-3">
@@ -142,7 +125,11 @@
 		</div>
 
 		{#if images.length === 0}
-			<p class="text-xs text-surface-500 py-6 text-center border border-dashed border-[#333] rounded">Aucune image. « + Ajouter… » permet d'en choisir plusieurs d'un coup.</p>
+			<ImageFrame
+				frameClass="h-40"
+				onclick={addImages}
+				empty={{ icon: '📁', text: 'Parcourir', hint: "Cliquer pour choisir une ou plusieurs images" }}
+			/>
 		{/if}
 
 		<div class="flex flex-col gap-1 max-h-72 overflow-y-auto pr-1">
@@ -179,11 +166,17 @@
 		{#if selected}
 			<div class="bg-[#1e1e21] border border-indigo-500/60 rounded-lg p-3 flex flex-col gap-3">
 				<span class="text-[10px] uppercase font-bold text-surface-400">Image sélectionnée</span>
-				{@render picture(selected, 'h-40')}
-				<div class="flex items-center gap-2 min-w-0">
-					<span class="text-[10px] text-surface-500 truncate flex-1" title={selected.path}>{fileName(selected.path)}</span>
-					<button type="button" onclick={() => replaceFile(selected)} class="text-[10px] font-bold text-indigo-400 hover:text-indigo-300 whitespace-nowrap">Remplacer le fichier…</button>
-				</div>
+				<!-- Même cadre que la fiche cible ; la croix est inutile, la liste au-dessus a déjà ✕ -->
+				<ImagePicker
+					title={imageTitle(selected)}
+					imageUrl={selected.path}
+					subtitle={fileName(selected.path)}
+					missing={selected.missing}
+					isEditing
+					clearable={false}
+					frameClass="h-40"
+					onchange={(path) => replaceFile(selected, path)}
+				/>
 				<div class="grid grid-cols-2 gap-2">
 					<div>
 						<label for="img-kind" class="block text-[10px] text-surface-400 mb-1">Type</label>
@@ -239,21 +232,23 @@
 		{/if}
 
 		{#if visible.length === 0}
-			<p class="text-xs text-surface-500 py-10 text-center border border-dashed border-[#333] rounded">Aucune image</p>
+			<ImageFrame frameClass="h-40" />
 		{/if}
 
 		<div class="flex flex-col gap-4 overflow-y-auto pr-1 max-h-[calc(85vh-9rem)]">
 			{#each visible as image, i (image.id ?? i)}
-				<button type="button" onclick={() => (viewerIndex = i)} class="text-left group">
-					<span class="flex items-center justify-between gap-2 mb-1">
-						<span class="text-xs font-bold text-white truncate">{imageTitle(image)}</span>
+				<ImageFrame
+					title={imageTitle(image)}
+					path={image.path}
+					subtitle={subtitle(image)}
+					missing={image.missing}
+					highlight={image.isFavorite}
+					onclick={() => (viewerIndex = i)}
+				>
+					{#snippet headerRight()}
 						{#if image.isFavorite}<span title="Image favorite (vignette)">⭐</span>{/if}
-					</span>
-					<span class="block rounded border transition-colors {image.isFavorite ? 'border-yellow-500/70' : 'border-[#333]'} group-hover:border-indigo-500">
-						{@render picture(image, 'h-52')}
-					</span>
-					<span class="block text-[10px] text-surface-400 mt-1 truncate">{subtitle(image)}</span>
-				</button>
+					{/snippet}
+				</ImageFrame>
 			{/each}
 		</div>
 	</div>

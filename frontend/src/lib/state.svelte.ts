@@ -117,6 +117,22 @@ export function imageSrc(path: string) {
 	}
 }
 
+export interface WeatherReading {
+	time: string;
+	cloudLow: number | null;
+	cloudMid: number | null;
+	cloudHigh: number | null;
+	seeing: number | null;
+	index1: number | null;
+	index2: number | null;
+	jetStream: number | null;
+	temp: number | null;
+	humidity: number | null;
+	dewPoint: number | null;
+	source: string;
+	edited: boolean;
+}
+
 export function emptyObservationTarget(targetId: number | null = null): ObservationTarget {
 	return { targetId, altitude: '', imgGood: 0, imgPass: 0, imgBad: 0, notes: '' };
 }
@@ -183,7 +199,11 @@ class AppState {
 	isEditingObservation = $state(false);
 	showMapModal = $state(false);
 	showSettings = $state(false);
-	settings = $state({ imagesFolder: '' });
+	settings = $state({ imagesFolder: '', weatherMarginHours: 1 });
+
+	// Relevés météo par session, et état de leur récupération ("" = rien en cours)
+	weatherBySession = $state<Record<number, WeatherReading[]>>({});
+	weatherStatus = $state<Record<number, string>>({});
 
 	// Clone de modification pour la cible active
 	targetForm = $state<any>({ name: '' });
@@ -326,7 +346,7 @@ class AppState {
 		}
 	}
 
-	async saveSettings(settings: { imagesFolder: string }) {
+	async saveSettings(settings: { imagesFolder: string; weatherMarginHours: number }) {
 		try {
 			const res = await apiFetch('/settings', {
 				method: 'POST',
@@ -339,6 +359,33 @@ class AppState {
 			await Promise.all([this.loadTargets(), this.loadObservations()]);
 		} catch (err) {
 			await showApiError('Enregistrement des réglages impossible', err);
+		}
+	}
+
+	// --- MÉTÉO ---
+
+	async loadWeather(sessionId: number | null | undefined) {
+		if (!sessionId || this.weatherBySession[sessionId]) return;
+		try {
+			const res = await apiFetch(`/sessions/${sessionId}/weather`);
+			this.weatherBySession[sessionId] = await res.json();
+		} catch (err) {
+			console.warn('Météo non chargée :', err);
+		}
+	}
+
+	// Récupération Open-Meteo, sans jamais bloquer ni interrompre la saisie : une erreur
+	// (pas de connexion, pas de lieu) est seulement affichée sous les relevés.
+	async fetchWeather(sessionId: number | null | undefined, refresh = false) {
+		if (!sessionId) return;
+		this.weatherStatus[sessionId] = 'loading';
+		try {
+			const res = await apiFetch(`/sessions/${sessionId}/weather/fetch?refresh=${refresh}`, { method: 'POST' });
+			this.weatherBySession[sessionId] = await res.json();
+			this.weatherStatus[sessionId] = '';
+		} catch (err) {
+			const reason = err instanceof TypeError ? 'Le serveur local ne répond pas.' : (err as Error).message;
+			this.weatherStatus[sessionId] = `Météo non récupérée : ${reason}`;
 		}
 	}
 
@@ -629,6 +676,7 @@ class AppState {
 	openObservation(id: number) {
 		this.activeObservationId = id;
 		this.isEditingObservation = false;
+		this.loadWeather(this.activeObservation?.sessionId);
 	}
 
 	closeObservation() {
@@ -730,6 +778,8 @@ legacyLocation: '',
 
 			this.activeObservationId = savedObs.id;
 			this.isEditingObservation = false;
+			// Météo du créneau : seules les heures manquantes sont demandées, en arrière-plan
+			this.fetchWeather(savedObs.sessionId);
 		} catch (err) {
 			await showApiError('Enregistrement impossible', err);
 		}

@@ -12,7 +12,7 @@ import urllib.parse
 import urllib.request
 import ssl
 import truststore
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -157,6 +157,25 @@ class ObservationImageSchema(BaseModel):
 
 class SettingsSchema(BaseModel):
     imagesFolder: str = ""
+    # Marge (en heures) ajoutée avant et après le créneau des observations pour la météo
+    weatherMarginHours: int = 1
+
+# Relevé météo horaire d'une session (une nuit dans un lieu)
+class WeatherReadingSchema(BaseModel):
+    time: str  # "AAAA-MM-JJ HH:MM", TU
+    cloudLow: Optional[float] = None
+    cloudMid: Optional[float] = None
+    cloudHigh: Optional[float] = None
+    seeing: Optional[float] = None
+    index1: Optional[float] = None
+    index2: Optional[float] = None
+    jetStream: Optional[float] = None
+    temp: Optional[float] = None
+    humidity: Optional[float] = None
+    dewPoint: Optional[float] = None
+    # open-meteo, meteoblue ou manuel ; "edited" protège une valeur corrigée du rafraîchissement
+    source: str = "manuel"
+    edited: bool = False
 
 ObservationSchema.model_rebuild()
 
@@ -244,8 +263,17 @@ def read_setting(conn, key: str, default: str = "") -> str:
     row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
     return row[0] if row else default
 
+def write_setting(cursor, key: str, value: str):
+    cursor.execute("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, value))
+
 def images_folder(conn) -> str:
     return read_setting(conn, "images_folder")
+
+def weather_margin(conn) -> int:
+    try:
+        return int(read_setting(conn, "weather_margin_hours", "1"))
+    except ValueError:
+        return 1
 
 def is_web_url(path: str) -> bool:
     return path.startswith(("http://", "https://"))
@@ -281,7 +309,7 @@ def guess_image_details(path: str):
 
 
 # ================= INITIALISATION & MIGRATIONS =================
-LATEST_SCHEMA_VERSION = 5
+LATEST_SCHEMA_VERSION = 6
 
 def migrate_to_v4(conn):
     # Reconstruction de la table observations : SQLite ne sait pas retirer une clé étrangère.
@@ -535,6 +563,25 @@ def init_db():
         migrate_to_v5(conn)
         current_version = 5
         print("Migration vers DB v5 (images multiples) effectuée.")
+
+    # --- VERSION 6: Relevés météo ---
+    if current_version < 6:
+        cursor.execute("""
+            CREATE TABLE weather_readings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+                time_utc TEXT NOT NULL,
+                cloud_low REAL, cloud_mid REAL, cloud_high REAL,
+                seeing_arcsec REAL, index1 REAL, index2 REAL,
+                jet_stream_ms REAL, temp_c REAL, humidity_pct REAL, dew_point_c REAL,
+                source TEXT NOT NULL DEFAULT 'manuel',
+                edited INTEGER NOT NULL DEFAULT 0,
+                UNIQUE (session_id, time_utc)
+            );
+        """)
+        cursor.execute("UPDATE schema_version SET version = 6")
+        current_version = 6
+        print("Migration vers DB v6 (relevés météo) effectuée.")
     conn.commit()
     conn.close()
 
@@ -763,7 +810,7 @@ def delete_observation(obs_id: int):
 @app.get("/api/settings", response_model=SettingsSchema)
 def get_settings():
     conn = connect()
-    settings = SettingsSchema(imagesFolder=images_folder(conn))
+    settings = SettingsSchema(imagesFolder=images_folder(conn), weatherMarginHours=weather_margin(conn))
     conn.close()
     return settings
 
@@ -772,10 +819,13 @@ def save_settings(settings: SettingsSchema):
     folder = settings.imagesFolder.strip()
     if folder and not os.path.isabs(folder):
         raise HTTPException(status_code=422, detail="Le dossier des images doit être un chemin complet (ex. E:\\Astro).")
+    if not 0 <= settings.weatherMarginHours <= 6:
+        raise HTTPException(status_code=422, detail="La marge météo doit être comprise entre 0 et 6 heures.")
     conn = connect()
     cursor = conn.cursor()
     previous = images_folder(conn)
-    cursor.execute("INSERT INTO settings (key, value) VALUES ('images_folder', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", (folder,))
+    write_setting(cursor, "images_folder", folder)
+    write_setting(cursor, "weather_margin_hours", str(settings.weatherMarginHours))
     # Les chemins déjà relatifs suivent le nouveau dossier (changement de lettre de disque) ;
     # les chemins complets qui se trouvent dans ce dossier deviennent relatifs.
     # Sans dossier, les chemins relatifs redeviennent complets d'après l'ancien dossier.
@@ -787,7 +837,7 @@ def save_settings(settings: SettingsSchema):
         cursor.execute("UPDATE targets SET image_ref = ? WHERE id = ?", (convert(path or ""), target_id))
     conn.commit()
     conn.close()
-    return SettingsSchema(imagesFolder=folder)
+    return SettingsSchema(imagesFolder=folder, weatherMarginHours=settings.weatherMarginHours)
 
 
 # ================= LIEUX =================
@@ -871,6 +921,154 @@ def get_elevation(lat: float, lon: float):
     data = fetch_json("https://api.open-meteo.com/v1/elevation", {"latitude": lat, "longitude": lon})
     elevations = data.get("elevation") or [None]
     return {"elevationM": elevations[0]}
+
+
+# ================= MÉTÉO (Open-Meteo) =================
+WEATHER_COLUMNS = ("cloud_low", "cloud_mid", "cloud_high", "seeing_arcsec", "index1", "index2",
+                   "jet_stream_ms", "temp_c", "humidity_pct", "dew_point_c")
+WEATHER_FIELDS = ("cloudLow", "cloudMid", "cloudHigh", "seeing", "index1", "index2",
+                  "jetStream", "temp", "humidity", "dewPoint")
+# Variables Open-Meteo → colonnes (le seeing et les index sont propres à meteoblue)
+OPEN_METEO_VARIABLES = {
+    "cloud_cover_low": "cloud_low", "cloud_cover_mid": "cloud_mid", "cloud_cover_high": "cloud_high",
+    "temperature_2m": "temp_c", "relative_humidity_2m": "humidity_pct", "dew_point_2m": "dew_point_c",
+    "wind_speed_250hPa": "jet_stream_ms",
+}
+# Au-delà de quelques jours, les prévisions archivées remplacent l'API de prévision
+RECENT_DAYS = 5
+
+def read_weather(conn, session_id: int) -> List[WeatherReadingSchema]:
+    rows = conn.execute(f"""
+        SELECT time_utc, {', '.join(WEATHER_COLUMNS)}, source, edited
+        FROM weather_readings WHERE session_id = ? ORDER BY time_utc
+    """, (session_id,)).fetchall()
+    return [WeatherReadingSchema(time=r[0], **dict(zip(WEATHER_FIELDS, r[1:11])), source=r[11], edited=bool(r[12])) for r in rows]
+
+def session_point(conn, session_id: int):
+    """Coordonnées de la session : celles du lieu enregistré, sinon l'ancienne saisie en texte libre."""
+    row = conn.execute("""
+        SELECT l.lat, l.lon FROM sessions s JOIN locations l ON l.id = s.location_id WHERE s.id = ?
+    """, (session_id,)).fetchone()
+    if row:
+        return row
+    for (legacy,) in conn.execute("SELECT legacy_location FROM observations WHERE session_id = ?", (session_id,)):
+        numbers = re.findall(r"-?\d+[.,]\d+", legacy or "")
+        if len(numbers) >= 2:
+            lat, lon = (float(n.replace(",", ".")) for n in numbers[:2])
+            if abs(lat) <= 90 and abs(lon) <= 180:
+                return lat, lon
+    return None
+
+def session_window(conn, session_id: int):
+    """Créneau des observations de la session, élargi de la marge réglée, en heures pleines TU."""
+    margin = timedelta(hours=weather_margin(conn))
+    starts, ends = [], []
+    for start, end in conn.execute("SELECT start_utc, end_utc FROM observations WHERE session_id = ?", (session_id,)):
+        if len(start) > 10:
+            starts.append(datetime.strptime(start, "%Y-%m-%d %H:%M"))
+            ends.append(datetime.strptime(end, "%Y-%m-%d %H:%M") if end and len(end) > 10 else starts[-1])
+        else:
+            # Heure inconnue : toute la nuit, de 16 h à 8 h TU
+            day = datetime.strptime(start, "%Y-%m-%d")
+            starts.append(day + timedelta(hours=16))
+            ends.append(day + timedelta(hours=32))
+    if not starts:
+        return None
+    first = (min(starts) - margin).replace(minute=0)
+    last = max(ends) + margin
+    if last.minute:
+        last = last.replace(minute=0) + timedelta(hours=1)
+    return first, last
+
+def fetch_open_meteo(lat: float, lon: float, first: datetime, last: datetime) -> dict:
+    """Relevés horaires Open-Meteo entre deux heures TU : {"AAAA-MM-JJ HH:MM": {colonne: valeur}}."""
+    recent = last >= datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=RECENT_DAYS)
+    host = "https://api.open-meteo.com" if recent else "https://historical-forecast-api.open-meteo.com"
+    data = fetch_json(f"{host}/v1/forecast", {
+        "latitude": lat, "longitude": lon, "hourly": ",".join(OPEN_METEO_VARIABLES),
+        "wind_speed_unit": "ms", "timezone": "GMT",
+        "start_date": f"{first:%Y-%m-%d}", "end_date": f"{last:%Y-%m-%d}",
+    })
+    if data.get("error"):
+        raise HTTPException(status_code=502, detail=f"Open-Meteo : {data.get('reason', 'erreur')}")
+    hourly = data.get("hourly", {})
+    readings = {}
+    for n, stamp in enumerate(hourly.get("time", [])):
+        moment = datetime.strptime(stamp, "%Y-%m-%dT%H:%M")
+        if first <= moment <= last:
+            readings[f"{moment:%Y-%m-%d %H:%M}"] = {column: hourly.get(variable, [None] * (n + 1))[n]
+                                                     for variable, column in OPEN_METEO_VARIABLES.items()}
+    return readings
+
+@app.get("/api/sessions/{session_id}/weather", response_model=List[WeatherReadingSchema])
+def get_weather(session_id: int):
+    conn = connect()
+    readings = read_weather(conn, session_id)
+    conn.close()
+    return readings
+
+@app.post("/api/sessions/{session_id}/weather/fetch", response_model=List[WeatherReadingSchema])
+def fetch_weather(session_id: int, refresh: bool = False):
+    """Récupère la météo Open-Meteo sur le créneau de la session.
+    Sans "refresh", seules les heures manquantes sont ajoutées ; avec, les relevés Open-Meteo non modifiés
+    sont aussi mis à jour. Les relevés saisis ou corrigés par l'utilisateur ne sont jamais écrasés."""
+    conn = connect()
+    try:
+        point = session_point(conn, session_id)
+        window = session_window(conn, session_id)
+        if not point:
+            raise HTTPException(status_code=422, detail="Choisissez un lieu pour récupérer la météo.")
+        if not window:
+            raise HTTPException(status_code=404, detail="Session introuvable.")
+        existing = {r.time: r for r in read_weather(conn, session_id)}
+        if not refresh and all(t in existing for t in hours_between(*window)):
+            return list(existing.values())
+        fetched = fetch_open_meteo(*point, *window)
+        cursor = conn.cursor()
+        for time, values in fetched.items():
+            current = existing.get(time)
+            if current and (current.source != "open-meteo" or current.edited or not refresh):
+                continue
+            columns = list(values)
+            cursor.execute(f"""
+                INSERT INTO weather_readings (session_id, time_utc, {', '.join(columns)}, source, edited)
+                VALUES (?, ?, {', '.join('?' * len(columns))}, 'open-meteo', 0)
+                ON CONFLICT (session_id, time_utc) DO UPDATE SET {', '.join(f'{c} = excluded.{c}' for c in columns)}
+            """, (session_id, time, *values.values()))
+        conn.commit()
+        return read_weather(conn, session_id)
+    finally:
+        conn.close()
+
+def hours_between(first: datetime, last: datetime):
+    moment = first
+    while moment <= last:
+        yield f"{moment:%Y-%m-%d %H:%M}"
+        moment += timedelta(hours=1)
+
+@app.post("/api/sessions/{session_id}/weather/readings", response_model=List[WeatherReadingSchema])
+def save_weather(session_id: int, readings: List[WeatherReadingSchema]):
+    """Remplace les relevés de la session (grille météo modifiée par l'utilisateur)."""
+    times = [r.time.replace("T", " ") for r in readings]
+    if len(set(times)) != len(times):
+        raise HTTPException(status_code=422, detail="Deux relevés ont la même heure.")
+    if any(not DATETIME_PATTERN.match(t) or len(t) <= 10 for t in times):
+        raise HTTPException(status_code=422, detail="Chaque relevé doit avoir une date et une heure TU.")
+    conn = connect()
+    cursor = conn.cursor()
+    if not cursor.execute("SELECT 1 FROM sessions WHERE id = ?", (session_id,)).fetchone():
+        conn.close()
+        raise HTTPException(status_code=404, detail="Session introuvable.")
+    cursor.execute("DELETE FROM weather_readings WHERE session_id = ?", (session_id,))
+    for time, r in zip(times, readings):
+        cursor.execute(f"""
+            INSERT INTO weather_readings (session_id, time_utc, {', '.join(WEATHER_COLUMNS)}, source, edited)
+            VALUES (?, ?, {', '.join('?' * len(WEATHER_COLUMNS))}, ?, ?)
+        """, (session_id, time, *(getattr(r, f) for f in WEATHER_FIELDS), r.source, int(r.edited)))
+    conn.commit()
+    readings = read_weather(conn, session_id)
+    conn.close()
+    return readings
 
 
 if __name__ == "__main__":
