@@ -6,6 +6,7 @@ import sqlite3
 import sys
 import threading
 import re
+import math
 import json
 import urllib.error
 import urllib.parse
@@ -1045,6 +1046,64 @@ def hours_between(first: datetime, last: datetime):
     while moment <= last:
         yield f"{moment:%Y-%m-%d %H:%M}"
         moment += timedelta(hours=1)
+
+# Ligne meteoblue telle que saisie dans les notes :
+#   « 21h00 TU ( 34-0-0 / 1.39 / 4-2 / 16ms / 13°C / 91% ) »
+# nuages bas-moyens-hauts / seeing / index 1-2 / jet stream / température / humidité.
+METEOBLUE_VALUES = re.compile(
+    r"\(\s*(\d+)\s*[-_]\s*(\d+)\s*[-_]\s*(\d+)\s*/\s*([\d.,]+|\?+)\s*/\s*(\d+)\s*[-_]\s*(\d+)\s*/"
+    r"\s*([\d.,]+)\s*m\s*/?\s*s\s*/\s*(-?[\d.,]+)\s*°?\s*C?\s*/\s*(\d+|\?+)\s*%?\s*\)",
+    re.IGNORECASE,
+)
+METEOBLUE_TIME = re.compile(r"\b(\d{1,2})\s*h\s*(\d{2})?|\b([01]\d|2[0-3])([0-5]\d)\b")
+
+def dew_point(temp: Optional[float], humidity: Optional[float]) -> Optional[float]:
+    """Point de rosée (formule de Magnus) : meteoblue ne le donne pas, la température et l'humidité suffisent."""
+    if temp is None or not humidity:
+        return None
+    gamma = math.log(humidity / 100) + 17.62 * temp / (243.12 + temp)
+    return round(243.12 * gamma / (17.62 - gamma), 1)
+
+def meteoblue_number(text: str) -> Optional[float]:
+    return None if "?" in text else float(text.replace(",", "."))
+
+def parse_meteoblue(text: str, night_date: str) -> List[WeatherReadingSchema]:
+    """Relevés trouvés dans un texte. L'heure est la première écrite avant la parenthèse ;
+    avant midi, elle appartient au lendemain de la nuit."""
+    night = datetime.strptime(night_date, "%Y-%m-%d")
+    readings = {}
+    for line in text.splitlines():
+        values = METEOBLUE_VALUES.search(line)
+        time = METEOBLUE_TIME.search(line[: values.start()]) if values else None
+        if not values or not time:
+            continue
+        hour = int(time.group(1) or time.group(3))
+        minute = int(time.group(2) or time.group(4) or 0)
+        if hour > 23 or minute > 59:
+            continue
+        moment = night.replace(hour=hour, minute=minute) + timedelta(days=0 if hour >= 12 else 1)
+        low, mid, high, seeing, index1, index2, jet, temp, humidity = values.groups()
+        stamp = f"{moment:%Y-%m-%d %H:%M}"
+        readings[stamp] = WeatherReadingSchema(
+            time=stamp, cloudLow=float(low), cloudMid=float(mid), cloudHigh=float(high),
+            seeing=meteoblue_number(seeing), index1=float(index1), index2=float(index2),
+            jetStream=meteoblue_number(jet), temp=meteoblue_number(temp), humidity=meteoblue_number(humidity),
+            dewPoint=dew_point(meteoblue_number(temp), meteoblue_number(humidity)),
+            source="meteoblue", edited=True,
+        )
+    return sorted(readings.values(), key=lambda r: r.time)
+
+class MeteoblueParseRequest(BaseModel):
+    text: str
+    nightDate: str
+
+@app.post("/api/weather/parse-meteoblue", response_model=List[WeatherReadingSchema])
+def parse_meteoblue_text(request: MeteoblueParseRequest):
+    try:
+        datetime.strptime(request.nightDate, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Date de nuit invalide.")
+    return parse_meteoblue(request.text, request.nightDate)
 
 @app.post("/api/sessions/{session_id}/weather/readings", response_model=List[WeatherReadingSchema])
 def save_weather(session_id: int, readings: List[WeatherReadingSchema]):

@@ -389,6 +389,37 @@ class AppState {
 		}
 	}
 
+	// Relevés modifiés dans la grille : remplacent ceux de la session
+	async saveWeather(sessionId: number, readings: WeatherReading[]) {
+		try {
+			const res = await apiFetch(`/sessions/${sessionId}/weather/readings`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(readings)
+			});
+			this.weatherBySession[sessionId] = await res.json();
+			return true;
+		} catch (err) {
+			await showApiError('Enregistrement de la météo impossible', err);
+			return false;
+		}
+	}
+
+	// Lignes au format meteoblue des notes → relevés (l'heure est rattachée à la nuit donnée)
+	async parseMeteoblue(text: string, nightDate: string): Promise<WeatherReading[]> {
+		try {
+			const res = await apiFetch('/weather/parse-meteoblue', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ text, nightDate })
+			});
+			return await res.json();
+		} catch (err) {
+			await showApiError('Lecture de la ligne meteoblue impossible', err);
+			return [];
+		}
+	}
+
 	async exportDatabase() {
 		const path = await save({
 			title: 'Exporter la base de données',

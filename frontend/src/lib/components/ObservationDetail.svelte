@@ -402,7 +402,7 @@
 						</div>
 
 						<!-- CONDITIONS DE LA NUIT (session) -->
-						<WeatherReadings sessionId={obs.sessionId} />
+						<WeatherReadings sessionId={obs.sessionId} nightDate={obs.nightDate} windowStart={obs.start.length > 10 ? obs.start : ''} windowEnd={obs.end.length > 10 ? obs.end : ''} />
 					</div>
 
 					<!-- Images -->
