@@ -5,6 +5,12 @@ import socket
 import sqlite3
 import sys
 import threading
+import json
+import urllib.error
+import urllib.parse
+import urllib.request
+import ssl
+import truststore
 from datetime import datetime
 from typing import List, Optional
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
@@ -121,6 +127,16 @@ class ObservationSchema(BaseModel):
     otherObjects: str = ""
     imageRaw: str = ""
     imageProcessed: str = ""
+    locationId: Optional[int] = None
+
+class LocationSchema(BaseModel):
+    id: Optional[int] = None
+    label: str
+    lat: float
+    lon: float
+    elevationM: Optional[float] = None
+    bortle: Optional[float] = None
+    notes: str = ""
 
 
 class ExportRequest(BaseModel):
@@ -150,7 +166,7 @@ def backup_before_migration(version: int):
 
 
 # ================= INITIALISATION & MIGRATIONS =================
-LATEST_SCHEMA_VERSION = 2
+LATEST_SCHEMA_VERSION = 3
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -243,7 +259,26 @@ def init_db():
         cursor.execute("ALTER TABLE targets ADD COLUMN notes TEXT DEFAULT '';")
         cursor.execute("UPDATE schema_version SET version = 2")
         current_version = 2
-        print("Migration vers DB v2 (ajout des notes) effectuée.")        
+        print("Migration vers DB v2 (ajout des notes) effectuée.")
+
+    # --- VERSION 3: Lieux enregistrés ---
+    # Le champ texte "location" est conservé tel quel : il sera converti plus tard (lot Migration)
+    if current_version < 3:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS locations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                label TEXT NOT NULL,
+                lat REAL NOT NULL,
+                lon REAL NOT NULL,
+                elevation_m REAL,
+                bortle REAL,
+                notes TEXT DEFAULT ''
+            );
+        """)
+        cursor.execute("ALTER TABLE observations ADD COLUMN location_id INTEGER REFERENCES locations (id) ON DELETE SET NULL;")
+        cursor.execute("UPDATE schema_version SET version = 3")
+        current_version = 3
+        print("Migration vers DB v3 (lieux enregistrés) effectuée.")
     conn.commit()
     conn.close()
 
@@ -326,7 +361,7 @@ def get_observations(target_id: int):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT id, target_id, date, obs_start, obs_end, location, altitude, sensor, filter, sensor_temp, sub_exposure, img_total, img_good, img_pass, img_bad, other_objects, image_raw, image_processed
+        SELECT id, target_id, date, obs_start, obs_end, location, altitude, sensor, filter, sensor_temp, sub_exposure, img_total, img_good, img_pass, img_bad, other_objects, image_raw, image_processed, location_id
         FROM observations WHERE target_id=?
     """, (target_id,))
     rows = cursor.fetchall()
@@ -337,7 +372,7 @@ def get_observations(target_id: int):
             id=r[0], targetId=r[1], date=r[2], obsStart=r[3], obsEnd=r[4], location=r[5],
             altitude=r[6], sensor=r[7], filter=r[8], sensorTemp=r[9], subExposure=r[10],
             imgTotal=r[11], imgGood=r[12], imgPass=r[13], imgBad=r[14], otherObjects=r[15],
-            imageRaw=r[16], imageProcessed=r[17]
+            imageRaw=r[16], imageProcessed=r[17], locationId=r[18]
         ) for r in rows
     ]
 
@@ -352,16 +387,16 @@ def save_observation(obs: ObservationSchema):
     if obs.id:
         # Mise à jour
         cursor.execute("""
-            UPDATE observations SET date=?, obs_start=?, obs_end=?, location=?, altitude=?, sensor=?, filter=?, sensor_temp=?, sub_exposure=?, img_total=?, img_good=?, img_pass=?, img_bad=?, other_objects=?, image_raw=?, image_processed=?
+            UPDATE observations SET date=?, obs_start=?, obs_end=?, location=?, altitude=?, sensor=?, filter=?, sensor_temp=?, sub_exposure=?, img_total=?, img_good=?, img_pass=?, img_bad=?, other_objects=?, image_raw=?, image_processed=?, location_id=?
             WHERE id=?
-        """, (obs.date, obs.obsStart, obs.obsEnd, obs.location, obs.altitude, obs.sensor, obs.filter, obs.sensorTemp, obs.subExposure, obs.imgTotal, obs.imgGood, obs.imgPass, obs.imgBad, obs.otherObjects, obs.imageRaw, obs.imageProcessed, obs.id))
+        """, (obs.date, obs.obsStart, obs.obsEnd, obs.location, obs.altitude, obs.sensor, obs.filter, obs.sensorTemp, obs.subExposure, obs.imgTotal, obs.imgGood, obs.imgPass, obs.imgBad, obs.otherObjects, obs.imageRaw, obs.imageProcessed, obs.locationId, obs.id))
         obs_id = obs.id
     else:
         # Création
         cursor.execute("""
-            INSERT INTO observations (target_id, date, obs_start, obs_end, location, altitude, sensor, filter, sensor_temp, sub_exposure, img_total, img_good, img_pass, img_bad, other_objects, image_raw, image_processed)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (obs.targetId, obs.date, obs.obsStart, obs.obsEnd, obs.location, obs.altitude, obs.sensor, obs.filter, obs.sensorTemp, obs.subExposure, obs.imgTotal, obs.imgGood, obs.imgPass, obs.imgBad, obs.otherObjects, obs.imageRaw, obs.imageProcessed))
+            INSERT INTO observations (target_id, date, obs_start, obs_end, location, altitude, sensor, filter, sensor_temp, sub_exposure, img_total, img_good, img_pass, img_bad, other_objects, image_raw, image_processed, location_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (obs.targetId, obs.date, obs.obsStart, obs.obsEnd, obs.location, obs.altitude, obs.sensor, obs.filter, obs.sensorTemp, obs.subExposure, obs.imgTotal, obs.imgGood, obs.imgPass, obs.imgBad, obs.otherObjects, obs.imageRaw, obs.imageProcessed, obs.locationId))
         obs_id = cursor.lastrowid
         
     conn.commit()
@@ -377,6 +412,89 @@ def delete_observation(obs_id: int):
     conn.commit()
     conn.close()
     return {"status": "success"}
+
+# ================= LIEUX =================
+def location_from_row(r) -> LocationSchema:
+    return LocationSchema(id=r[0], label=r[1], lat=r[2], lon=r[3], elevationM=r[4], bortle=r[5], notes=r[6] or "")
+
+@app.get("/api/locations", response_model=List[LocationSchema])
+def get_locations():
+    conn = sqlite3.connect(DB_PATH)
+    rows = conn.execute("SELECT id, label, lat, lon, elevation_m, bortle, notes FROM locations ORDER BY label COLLATE NOCASE").fetchall()
+    conn.close()
+    return [location_from_row(r) for r in rows]
+
+@app.post("/api/locations", response_model=LocationSchema)
+def save_location(location: LocationSchema):
+    label = location.label.strip()
+    if not label:
+        raise HTTPException(status_code=422, detail="Le libellé du lieu est obligatoire.")
+    if not (-90 <= location.lat <= 90 and -180 <= location.lon <= 180):
+        raise HTTPException(status_code=422, detail="Coordonnées hors limites.")
+    location.label = label
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    values = (location.label, location.lat, location.lon, location.elevationM, location.bortle, location.notes)
+    if location.id:
+        cursor.execute("UPDATE locations SET label=?, lat=?, lon=?, elevation_m=?, bortle=?, notes=? WHERE id=?", (*values, location.id))
+        if cursor.rowcount == 0:
+            conn.close()
+            raise HTTPException(status_code=404, detail="Lieu introuvable.")
+    else:
+        cursor.execute("INSERT INTO locations (label, lat, lon, elevation_m, bortle, notes) VALUES (?, ?, ?, ?, ?, ?)", values)
+        location.id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return location
+
+
+# ================= SERVICES EN LIGNE (carte des lieux) =================
+# Nominatim exige un User-Agent qui identifie l'application : les appels passent donc par le backend
+USER_AGENT = "AllNightLong (+https://github.com/dchatel/allnightlong)"
+EXTERNAL_TIMEOUT_S = 10
+# Certificats vérifiés par le système, comme le navigateur : le magasin lu par Python peut
+# contenir des certificats intermédiaires expirés qui font échouer certains sites
+SSL_CONTEXT = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+
+def fetch_json(url: str, params: dict):
+    request = urllib.request.Request(
+        f"{url}?{urllib.parse.urlencode(params)}",
+        headers={"User-Agent": USER_AGENT, "Accept-Language": "fr"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=EXTERNAL_TIMEOUT_S, context=SSL_CONTEXT) as response:
+            return json.load(response)
+    except (urllib.error.URLError, TimeoutError, ValueError) as err:
+        raise HTTPException(status_code=502, detail=f"Service en ligne injoignable : {err}")
+
+# Nom de commune le plus précis disponible, proposé comme libellé du lieu
+def place_name(address: dict) -> str:
+    for key in ("village", "town", "city", "hamlet", "municipality", "suburb", "county"):
+        if address.get(key):
+            return address[key]
+    return ""
+
+@app.get("/api/geo/reverse")
+def reverse_geocode(lat: float, lon: float):
+    data = fetch_json("https://nominatim.openstreetmap.org/reverse", {
+        "format": "jsonv2", "lat": lat, "lon": lon, "zoom": 18, "addressdetails": 1,
+    })
+    return {"address": data.get("display_name", ""), "place": place_name(data.get("address", {}))}
+
+@app.get("/api/geo/search")
+def search_place(q: str):
+    data = fetch_json("https://nominatim.openstreetmap.org/search", {
+        "format": "jsonv2", "q": q, "limit": 5,
+    })
+    return [{"address": d.get("display_name", ""), "lat": float(d["lat"]), "lon": float(d["lon"])} for d in data]
+
+@app.get("/api/geo/elevation")
+def get_elevation(lat: float, lon: float):
+    data = fetch_json("https://api.open-meteo.com/v1/elevation", {"latitude": lat, "longitude": lon})
+    elevations = data.get("elevation") or [None]
+    return {"elevationM": elevations[0]}
+
 
 if __name__ == "__main__":
     import uvicorn

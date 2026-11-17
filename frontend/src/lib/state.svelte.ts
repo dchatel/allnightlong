@@ -41,6 +41,31 @@ async function showApiError(title: string, err: unknown) {
 	await message(reason, { title, kind: 'error' });
 }
 
+export interface Location {
+	id?: number;
+	label: string;
+	lat: number;
+	lon: number;
+	elevationM: number | null;
+	bortle: number | null;
+	notes: string;
+}
+
+interface LocationEditor {
+	form: Location;
+	// Appelé avec le lieu enregistré, par exemple pour le choisir dans le rapport ouvert
+	onSaved?: (location: Location) => void;
+}
+
+// Coordonnées saisies en texte libre avant les lieux enregistrés : "50,5244 N / 2,6400 E"
+export function parseLegacyCoords(text: string | null | undefined): { lat: number; lon: number } | null {
+	const numbers = (text ?? '').match(/-?\d+[.,]\d+/g);
+	if (!numbers || numbers.length < 2) return null;
+	const [lat, lon] = numbers.map(n => Number(n.replace(',', '.')));
+	if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+	return { lat, lon };
+}
+
 class AppState {
 	isBackendReady = $state(false);
 	// Motif affiché sur l'écran de démarrage quand le backend ne répond pas
@@ -51,6 +76,10 @@ class AppState {
 	// --- TABLES DE DONNÉES RÉACTIVES ---
 	targets = $state<any[]>([]);
 	observations = $state<any[]>([]);
+	locations = $state<Location[]>([]);
+
+	// Fenêtre de création / modification d'un lieu (null = fermée)
+	locationEditor = $state<LocationEditor | null>(null);
 
 	// --- ÉTATS DE L'INTERFACE ---
 	searchQuery = $state('');
@@ -92,7 +121,7 @@ class AppState {
 				const res = apiUrl ? await apiFetch('/status') : null;
 				if (res?.ok) {
 					console.log("Backend is ready.");
-					await this.loadTargets();
+					await Promise.all([this.loadTargets(), this.loadLocations()]);
 					this.isBackendReady = true;
 					break;
 				}
@@ -188,6 +217,75 @@ class AppState {
 			}
 		} catch (err) {
 			await showApiError('Chargement des cibles impossible', err);
+		}
+	}
+
+	// --- LIEUX ---
+
+	async loadLocations() {
+		try {
+			const res = await apiFetch('/locations');
+			this.locations = await res.json();
+		} catch (err) {
+			await showApiError('Chargement des lieux impossible', err);
+		}
+	}
+
+	locationById(id: number | null | undefined) {
+		return id == null ? null : this.locations.find(l => l.id === id) ?? null;
+	}
+
+	// Libellé du lieu enregistré, sinon l'ancienne saisie en texte libre
+	locationText(obs: any) {
+		return this.locationById(obs?.locationId)?.label || obs?.location || '';
+	}
+
+	// Lieu proposé pour un nouveau rapport : celui du rapport le plus récent qui en a un
+	get defaultLocationId() {
+		const latest = [...this.observations]
+			.filter(o => this.locationById(o.locationId))
+			.sort((a, b) => String(b.date).localeCompare(String(a.date)))[0];
+		return latest?.locationId ?? (this.locations.length === 1 ? this.locations[0].id : null);
+	}
+
+	openLocationEditor(location: Partial<Location> = {}, onSaved?: (location: Location) => void) {
+		this.locationEditor = {
+			form: { label: '', lat: NaN, lon: NaN, elevationM: null, bortle: null, notes: '', ...location },
+			onSaved
+		};
+	}
+
+	closeLocationEditor() {
+		this.locationEditor = null;
+	}
+
+	async saveLocation(location: Location) {
+		try {
+			const res = await apiFetch('/locations', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(location)
+			});
+			const saved: Location = await res.json();
+			const others = this.locations.filter(l => l.id !== saved.id);
+			this.locations = [...others, saved].sort((a, b) => a.label.localeCompare(b.label, 'fr'));
+			this.locationEditor?.onSaved?.(saved);
+			this.locationEditor = null;
+		} catch (err) {
+			await showApiError('Enregistrement du lieu impossible', err);
+		}
+	}
+
+	// Services en ligne (adresse, recherche, altitude), appelés via le backend.
+	// Une panne réseau ne doit jamais bloquer la saisie : l'appelant reçoit null.
+	async geo(path: string, params: Record<string, string | number>) {
+		try {
+			const query = new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)]));
+			const res = await apiFetch(`/geo/${path}?${query}`);
+			return await res.json();
+		} catch (err) {
+			console.warn(`Service en ligne indisponible (${path}) :`, err);
+			return null;
 		}
 	}
 
@@ -367,7 +465,8 @@ class AppState {
 			date: new Date().toISOString().split('T')[0],
 			obsStart: '',
 			obsEnd: '',
-			location: 'Jardin',
+			location: '',
+			locationId: this.defaultLocationId,
 			altitude: '',
 			sensor: 'Seestar S50 (IMX462)',
 			filter: 'IRCUT',
