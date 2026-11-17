@@ -57,7 +57,49 @@ interface LocationEditor {
 	onSaved?: (location: Location) => void;
 }
 
-// Coordonnées saisies en texte libre avant les lieux enregistrés : "50,5244 N / 2,6400 E"
+interface TargetSheet {
+	mode: 'view' | 'create';
+	targetId?: number;
+	form?: any;
+	// Appelé avec la cible créée, par exemple pour la choisir dans la ligne du rapport
+	onSaved?: (target: any) => void;
+}
+
+export interface ObservationTarget {
+	targetId: number | null;
+	altitude: string;
+	imgGood: number;
+	imgPass: number;
+	imgBad: number;
+	notes: string;
+}
+
+export function emptyObservationTarget(targetId: number | null = null): ObservationTarget {
+	return { targetId, altitude: '', imgGood: 0, imgPass: 0, imgBad: 0, notes: '' };
+}
+
+const MONTHS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+
+// "2026-11-14 19:30" → "14/11/2026"
+export function formatDate(datetime: string | null | undefined) {
+	const [y, m, d] = (datetime ?? '').slice(0, 10).split('-');
+	return d ? `${d}/${m}/${y}` : '';
+}
+
+// "2026-11-14 19:30" → "14/11/2026 19:30"
+export function formatDateTime(datetime: string | null | undefined) {
+	if (!datetime) return '';
+	const time = datetime.slice(11, 16);
+	return time ? `${formatDate(datetime)} ${time}` : formatDate(datetime);
+}
+
+export function monthLabel(key: string) {
+	const [y, m] = key.split('-');
+	const name = MONTHS[Number(m) - 1] ?? '';
+	return `${name.charAt(0).toUpperCase()}${name.slice(1)} ${y}`;
+}
+
+// Coordonnées saisies en texte libreavant les lieux enregistrés : "50,5244 N / 2,6400 E"
 export function parseLegacyCoords(text: string | null | undefined): { lat: number; lon: number } | null {
 	const numbers = (text ?? '').match(/-?\d+[.,]\d+/g);
 	if (!numbers || numbers.length < 2) return null;
@@ -81,8 +123,17 @@ class AppState {
 	// Fenêtre de création / modification d'un lieu (null = fermée)
 	locationEditor = $state<LocationEditor | null>(null);
 
+	// Fiche d'une cible ouverte par-dessus un rapport, en lecture ou en création (null = fermée)
+	targetSheet = $state<TargetSheet | null>(null);
+
 	// --- ÉTATS DE L'INTERFACE ---
+	leftTab = $state<'targets' | 'observations'>('targets');
 	searchQuery = $state('');
+	targetSortDescending = $state(false);
+	observationSearch = $state('');
+	observationSortOldestFirst = $state(false);
+	// Mois affiché dans l'onglet Observations ("AAAA-MM"), null = toutes
+	observationMonth = $state<string | null>(null);
 	selectedTargetId = $state<number | null>(null);
 	isEditingTarget = $state(false); 
 	activeObservationId = $state<number | null>(null);
@@ -121,7 +172,7 @@ class AppState {
 				const res = apiUrl ? await apiFetch('/status') : null;
 				if (res?.ok) {
 					console.log("Backend is ready.");
-					await Promise.all([this.loadTargets(), this.loadLocations()]);
+					await Promise.all([this.loadTargets(), this.loadLocations(), this.loadObservations()]);
 					this.isBackendReady = true;
 					break;
 				}
@@ -138,11 +189,60 @@ class AppState {
 
 	// --- ÉTATS DÉRIVÉS RÉACTIFS ---
 	get filteredTargets() {
-		return this.targets.filter(t => 
-			t.name.toLowerCase().includes(this.searchQuery.toLowerCase()) || 
-			(t.usualName && t.usualName.toLowerCase().includes(this.searchQuery.toLowerCase())) ||
-			(t.constellation && t.constellation.toLowerCase().includes(this.searchQuery.toLowerCase()))
+		const query = this.searchQuery.toLowerCase();
+		const direction = this.targetSortDescending ? -1 : 1;
+		return this.targets
+			.filter(t =>
+				t.name.toLowerCase().includes(query) ||
+				(t.usualName && t.usualName.toLowerCase().includes(query)) ||
+				(t.constellation && t.constellation.toLowerCase().includes(query))
+			)
+			// "numeric" range NGC 925 avant NGC 7000
+			.sort((a, b) => direction * a.name.localeCompare(b.name, 'fr', { numeric: true }));
+	}
+
+	// Cibles triées par nom, pour les listes de choix
+	get targetsByName() {
+		return [...this.targets].sort((a, b) => a.name.localeCompare(b.name, 'fr', { numeric: true }));
+	}
+
+	targetName(id: number | null | undefined) {
+		return this.targets.find(t => t.id === id)?.name ?? '';
+	}
+
+	observationTargetNames(obs: any) {
+		return (obs?.targets ?? []).map((t: ObservationTarget) => this.targetName(t.targetId)).filter(Boolean).join(' + ');
+	}
+
+	// Les plus récentes d'abord
+	get observationsByDate() {
+		return [...this.observations].sort((a, b) => String(b.start).localeCompare(String(a.start)));
+	}
+
+	// Mois ayant des observations, avec leur nombre et les cibles vues
+	get observationMonths() {
+		const months = new Map<string, any[]>();
+		for (const obs of this.observationsByDate) {
+			const key = String(obs.start).slice(0, 7);
+			months.set(key, [...(months.get(key) ?? []), obs]);
+		}
+		return [...months].map(([key, list]) => ({
+			key,
+			label: monthLabel(key),
+			count: list.length,
+			preview: [...new Set(list.flatMap(o => o.targets.map((t: ObservationTarget) => this.targetName(t.targetId))))].join(', ')
+		}));
+	}
+
+	// Onglet Observations : mois choisi, recherche (cible, lieu, filtre, notes) et ordre
+	get visibleObservations() {
+		const query = this.observationSearch.toLowerCase().trim();
+		const list = this.observationsByDate.filter(obs =>
+			(!this.observationMonth || String(obs.start).startsWith(this.observationMonth)) &&
+			(!query || [this.observationTargetNames(obs), this.locationText(obs), obs.filter, obs.notes, formatDate(obs.start)]
+				.some(text => String(text ?? '').toLowerCase().includes(query)))
 		);
+		return this.observationSortOldestFirst ? list.reverse() : list;
 	}
 
 	get activeTarget() {
@@ -150,23 +250,11 @@ class AppState {
 	}
 
 	get activeTargetObservations() {
-		return this.observations.filter(o => o.targetId === this.selectedTargetId);
+		return this.observationsByDate.filter(o => o.targets.some((t: ObservationTarget) => t.targetId === this.selectedTargetId));
 	}
 
 	get activeObservation() {
 		return this.observations.find(o => o.id === this.activeObservationId) || null;
-	}
-
-	get calculatedLightImages() {
-		const source = this.isEditingObservation ? this.observationForm : this.activeObservation;
-		if (!source) return 0;
-		return (Number(source.imgGood) || 0) + (Number(source.imgPass) || 0);
-	}
-	
-	get calculatedDuration() {
-		const source = this.isEditingObservation ? this.observationForm : this.activeObservation;
-		if (!source) return 0;
-		return ((Number(source.imgGood) || 0) * Number(source.subExposure || 0)) / 60;
 	}
 
 	// --- APPELS API (COMMUNICATION AVEC LE PYTHON) ---
@@ -213,11 +301,62 @@ class AppState {
 			
 			// Sélectionner automatiquement le premier élément s'il y en a un
 			if (this.targets.length > 0 && this.selectedTargetId === null) {
-				this.selectTarget(this.targets[0].id);
+				this.selectTarget((this.filteredTargets[0] ?? this.targets[0]).id);
 			}
 		} catch (err) {
 			await showApiError('Chargement des cibles impossible', err);
 		}
+	}
+
+	// --- FICHE CIBLE PAR-DESSUS UN RAPPORT ---
+
+	openTargetSheet(targetId: number) {
+		this.targetSheet = { mode: 'view', targetId };
+	}
+
+	openTargetCreator(onSaved?: (target: any) => void) {
+		this.targetSheet = {
+			mode: 'create',
+			form: {
+				name: '', usualName: '', constellation: '', otherDesignations: '', type: '', group: '',
+				magnitude: '', colorIndex: '', surfBrightness: '', size: '', ra: '', dec: '', imageRef: '', notes: ''
+			},
+			onSaved
+		};
+	}
+
+	closeTargetSheet() {
+		this.targetSheet = null;
+	}
+
+	async createTargetFromSheet() {
+		const sheet = this.targetSheet;
+		if (!sheet?.form) return;
+		const form = $state.snapshot(sheet.form);
+		if (!form.name.trim()) {
+			await message('Indiquez au moins le nom de la cible.', { title: 'Nom manquant', kind: 'warning' });
+			return;
+		}
+		try {
+			const res = await apiFetch('/targets', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ ...form, name: form.name.trim() })
+			});
+			const saved = await res.json();
+			this.targets.push(saved);
+			sheet.onSaved?.(saved);
+			this.targetSheet = null;
+		} catch (err) {
+			await showApiError('Création de la cible impossible', err);
+		}
+	}
+
+	// Quitte le rapport pour la fiche complète, dans l'onglet Cibles
+	showTargetInTargetsTab(targetId: number) {
+		this.targetSheet = null;
+		this.leftTab = 'targets';
+		this.selectTarget(targetId);
 	}
 
 	// --- LIEUX ---
@@ -237,14 +376,12 @@ class AppState {
 
 	// Libellé du lieu enregistré, sinon l'ancienne saisie en texte libre
 	locationText(obs: any) {
-		return this.locationById(obs?.locationId)?.label || obs?.location || '';
+		return this.locationById(obs?.locationId)?.label || obs?.legacyLocation || '';
 	}
 
 	// Lieu proposé pour un nouveau rapport : celui du rapport le plus récent qui en a un
 	get defaultLocationId() {
-		const latest = [...this.observations]
-			.filter(o => this.locationById(o.locationId))
-			.sort((a, b) => String(b.date).localeCompare(String(a.date)))[0];
+		const latest = this.observationsByDate.find(o => this.locationById(o.locationId));
 		return latest?.locationId ?? (this.locations.length === 1 ? this.locations[0].id : null);
 	}
 
@@ -289,9 +426,9 @@ class AppState {
 		}
 	}
 
-	async loadObservations(targetId: number) {
+	async loadObservations() {
 		try {
-			const res = await apiFetch(`/targets/${targetId}/observations`);
+			const res = await apiFetch('/observations');
 			this.observations = await res.json();
 		} catch (err) {
 			await showApiError('Chargement des observations impossible', err);
@@ -302,9 +439,6 @@ class AppState {
 		this.selectedTargetId = id;
 		this.isEditingTarget = false;
 		this.closeObservation();
-
-		// Charger les observations réelles de cet objet depuis la base SQLite
-		await this.loadObservations(id);
 	}
 
 	startEditTarget() {
@@ -365,7 +499,7 @@ class AppState {
 			try {
 				await apiFetch(`/targets/${this.selectedTargetId}`, { method: 'DELETE' });
 				this.selectedTargetId = null;
-				await this.loadTargets();
+				await Promise.all([this.loadTargets(), this.loadObservations()]);
 			} catch (err) {
 				await showApiError('Suppression impossible', err);
 			}
@@ -405,7 +539,7 @@ class AppState {
 		if (this.selectedTargetId && this.selectedTargetId > 1000000000) {
 			this.targets = this.targets.filter(t => t.id !== this.selectedTargetId);
 			if (this.targets.length > 0) {
-				this.selectTarget(this.targets[0].id);
+				this.selectTarget((this.filteredTargets[0] ?? this.targets[0]).id);
 			} else {
 				this.selectedTargetId = null;
 			}
@@ -438,7 +572,8 @@ class AppState {
 
 	startEditObservation() {
 		if (this.activeObservation) {
-			this.observationForm = { ...this.activeObservation };
+			// Copie profonde : le tableau des cibles est modifié ligne par ligne
+			this.observationForm = $state.snapshot(this.activeObservation);
 			this.isEditingObservation = true;
 		}
 	}
@@ -455,30 +590,26 @@ class AppState {
 		// jamais lu hors édition, l'original redevient la source affichée.
 	}
 
-	async createNewObservation() {
-		if (!this.selectedTargetId) return;
-
+	// Depuis une fiche cible, le rapport part avec cette cible ; depuis l'onglet Observations, sans cible
+	async createNewObservation(targetId: number | null = this.leftTab === 'targets' ? this.selectedTargetId : null) {
 		const newId = Date.now(); // ID temporaire, comme pour createNewTarget
 		const newObs = {
 			id: newId,
-			targetId: this.selectedTargetId,
-			date: new Date().toISOString().split('T')[0],
-			obsStart: '',
-			obsEnd: '',
-			location: '',
+			start: '',
+			end: '',
 			locationId: this.defaultLocationId,
-			altitude: '',
+			bortle: null,
+			instrument: '',
 			sensor: 'Seestar S50 (IMX462)',
 			filter: 'IRCUT',
 			sensorTemp: '',
 			subExposure: '10',
 			imgTotal: 0,
-			imgGood: 0,
-			imgPass: 0,
-			imgBad: 0,
-			otherObjects: '',
+			notes: '',
 			imageRaw: '',
-			imageProcessed: ''
+			imageProcessed: '',
+			legacyLocation: '',
+			targets: targetId ? [emptyObservationTarget(targetId)] : []
 		};
 
 		// On l'ajoute temporairement en mémoire et on ouvre directement l'édition,
@@ -491,7 +622,13 @@ class AppState {
 
 	async saveObservation() {
 		try {
-			const obsToSave = { ...this.observationForm };
+			const obsToSave = $state.snapshot(this.observationForm);
+			// Lignes ajoutées mais sans cible choisie : ignorées plutôt que refusées
+			obsToSave.targets = obsToSave.targets
+				.filter((t: ObservationTarget) => t.targetId)
+				// Un champ numérique vidé vaut null : compté comme 0
+				.map((t: ObservationTarget) => ({ ...t, imgGood: Number(t.imgGood) || 0, imgPass: Number(t.imgPass) || 0, imgBad: Number(t.imgBad) || 0 }));
+			obsToSave.imgTotal = Number(obsToSave.imgTotal) || 0;
 			const wasNewObs = obsToSave.id && obsToSave.id > 1000000000;
 			const tempId = obsToSave.id;
 

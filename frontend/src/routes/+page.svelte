@@ -9,6 +9,8 @@
 	import ObservationDetail from '$lib/components/ObservationDetail.svelte';
 	import MapModal from '$lib/components/MapModal.svelte';
 	import LocationModal from '$lib/components/LocationModal.svelte';
+	import ObservationBoard from '$lib/components/ObservationBoard.svelte';
+	import TargetSheetModal from '$lib/components/TargetSheetModal.svelte';
 </script>
 
 <div class="flex h-full w-full bg-[#121214] overflow-hidden">
@@ -18,7 +20,11 @@
 
 	<!-- 2. CONTENU PRINCIPAL (DROITE) -->
 	<main class="flex-1 h-full flex flex-col bg-[#121214] p-8 space-y-6 overflow-y-auto xl:overflow-hidden">
-		{#if appState.activeTarget}
+		{#if appState.leftTab === 'observations'}
+			<!-- Toutes les observations, en cartes (onglet Observations) -->
+			<ObservationBoard />
+
+		{:else if appState.activeTarget}
 			
 			<!-- Fiche d'identité fixe -->
 			<TargetCard />
@@ -47,3 +53,4 @@
 <MapModal />
 <ObservationDetail />
 <LocationModal />
+<TargetSheetModal />
