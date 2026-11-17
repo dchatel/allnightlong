@@ -61,7 +61,7 @@
 
 					<div class="absolute bottom-0 left-0 right-0 p-3">
 						<span class="text-sm font-bold text-white block">{obs.date}</span>
-						<span class="text-[10px] text-surface-300 block">{obs.location || '—'}</span>
+						<span class="text-[10px] text-surface-300 block">{appState.locationText(obs) || '—'}</span>
 						{#if obs.imgGood || obs.imgPass || obs.imgBad}
 							<div class="flex gap-1 mt-1.5 h-1 rounded-full overflow-hidden w-24">
 								<div class="bg-green-400" style="flex: {obs.imgGood || 0}"></div>

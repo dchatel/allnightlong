@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { appState } from '$lib/state.svelte';
+	import { appState, parseLegacyCoords } from '$lib/state.svelte';
 	import { fade, slide } from 'svelte/transition';
 	import ImagePicker from '$lib/components/ImagePicker.svelte';
 
@@ -37,6 +37,23 @@
 	}
 	function setField(key: string) {
 		return (v: any) => { appState.observationForm[key] = v; };
+	}
+
+	const NEW_LOCATION = 'new';
+	let selectedLocation = $derived(appState.locationById(fieldValue('locationId')));
+
+	function chooseLocation(select: HTMLSelectElement) {
+		if (select.value !== NEW_LOCATION) {
+			setField('locationId')(select.value ? Number(select.value) : null);
+			return;
+		}
+		// La liste revient sur le lieu actuel : le nouveau lieu n'est choisi qu'une fois enregistré
+		select.value = String(fieldValue('locationId') ?? '');
+		// La carte s'ouvre sur les coordonnées déjà saisies en texte libre, s'il y en a
+		appState.openLocationEditor(
+			{ ...(parseLegacyCoords(fieldValue('location')) ?? {}) },
+			(saved) => setField('locationId')(saved.id)
+		);
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
@@ -130,9 +147,38 @@
 									</div>
 								</div>
 								<div>
-									<label for="obs-location" class="block text-[10px] text-surface-400 mb-1">Localisation</label>
+									<label for="obs-location" class="block text-[10px] text-surface-400 mb-1">Lieu</label>
 									{#if appState.isEditingObservation}
-										<input id="obs-location" type="text" class="form-input" value={fieldValue('location')} oninput={(e) => setField('location')(e.currentTarget.value)} />
+										<div class="flex gap-1">
+											<select
+												id="obs-location"
+												class="form-input flex-1 min-w-0"
+												value={fieldValue('locationId') ?? ''}
+												onchange={(e) => chooseLocation(e.currentTarget)}
+											>
+												<option value="">— Aucun lieu —</option>
+												{#each appState.locations as location (location.id)}
+													<option value={location.id}>{location.label}</option>
+												{/each}
+												<option value={NEW_LOCATION}>+ Nouveau lieu…</option>
+											</select>
+											{#if selectedLocation}
+												<button
+													type="button"
+													title="Modifier ce lieu"
+													onclick={() => appState.openLocationEditor({ ...selectedLocation })}
+													class="btn-secondary text-xs px-2"
+												>✎</button>
+											{/if}
+										</div>
+										{#if !selectedLocation && fieldValue('location')}
+											<span class="block text-[10px] text-surface-500 mt-1">Ancienne saisie : {fieldValue('location')}</span>
+										{/if}
+									{:else if selectedLocation}
+										<span id="obs-location" class="block text-sm text-white">{selectedLocation.label}</span>
+										{#if selectedLocation.bortle != null}
+											<span class="block text-[10px] text-surface-400">Bortle {selectedLocation.bortle}</span>
+										{/if}
 									{:else}
 										<span id="obs-location" class="block text-sm text-white">{fieldValue('location') || '—'}</span>
 									{/if}

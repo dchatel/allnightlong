@@ -8,6 +8,7 @@
 	import ObservationHistory from '$lib/components/ObservationHistory.svelte';
 	import ObservationDetail from '$lib/components/ObservationDetail.svelte';
 	import MapModal from '$lib/components/MapModal.svelte';
+	import LocationModal from '$lib/components/LocationModal.svelte';
 </script>
 
 <div class="flex h-full w-full bg-[#121214] overflow-hidden">
@@ -45,3 +46,4 @@
 <!-- 3. MODALES (OVERLAY) -->
 <MapModal />
 <ObservationDetail />
+<LocationModal />
