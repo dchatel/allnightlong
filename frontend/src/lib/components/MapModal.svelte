@@ -1,21 +1,12 @@
 <script lang="ts">
 	import { appState } from '$lib/state.svelte';
 	import { fade, slide } from 'svelte/transition'; // [3]
+	import { parseSexagesimal } from '$lib/astro';
 
 	// Miroir ESA du relevé DSS2 couleur : l'appli ne dépend pas des serveurs du CDS pour l'imagerie
 	const DSS_SURVEY_URL = 'https://skies.esac.esa.int/DSSColor/';
 
 	let mapError = $state('');
-
-	// Convertit "05 35 16.47 / 83.81" ou "05h 35m 17s" en valeur décimale (heures ou degrés)
-	function parseSexagesimal(value: string): number | null {
-		const sexagesimal = value.split('/')[0].replace(/,/g, '.');
-		const [first, minutes = 0, seconds = 0] = (sexagesimal.match(/\d+(?:\.\d+)?/g) ?? []).map(Number);
-		if (first === undefined) return null;
-
-		const absolute = first + minutes / 60 + seconds / 3600;
-		return sexagesimal.trim().startsWith('-') ? -absolute : absolute;
-	}
 
 	// Des coordonnées évitent la résolution du nom par Sesame, service uniquement hébergé au CDS
 	function getAladinTarget(target: { name: string; ra: string; dec: string }): string {

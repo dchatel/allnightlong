@@ -51,6 +51,7 @@
 		"@tauri-apps/plugin-updater": "^2.10.1",
 		"@tauri-apps/plugin-window-state": "^2.4.1",
 		"aladin-lite": "3.8.2",
+		"astronomy-engine": "2.1.19",
 		"leaflet": "1.9.4"
 	}
 }
