@@ -8,6 +8,7 @@
 		title = '',
 		path = '',
 		subtitle = '',
+		showPath = false,
 		missing = false,
 		highlight = false,
 		fill = false,
@@ -21,6 +22,8 @@
 		title?: string;
 		path?: string;
 		subtitle?: string;
+		// Chemin du fichier sous l'image, en discret : utile pour vérifier où l'application va le chercher
+		showPath?: boolean;
 		missing?: boolean;
 		// Bordure dorée (image favorite)
 		highlight?: boolean;
@@ -81,6 +84,11 @@
 	{#if subtitle}
 		<span class="block text-[10px] text-surface-400 mt-1 truncate shrink-0">{subtitle}</span>
 	{/if}
+	{#if showPath && path && !unavailable}
+		<!-- Coupé au début plutôt qu'à la fin : le nom du fichier reste lisible.
+		     Une image introuvable affiche déjà son chemin dans le cadre. -->
+		<span class="path block text-[9px] text-surface-500 truncate shrink-0" title={path}><bdi>{path}</bdi></span>
+	{/if}
 {/snippet}
 
 {#if onclick}
@@ -99,3 +107,10 @@
 		{@render content()}
 	</div>
 {/if}
+
+<style>
+	.path {
+		direction: rtl;
+		text-align: left;
+	}
+</style>
