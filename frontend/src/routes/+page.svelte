@@ -13,6 +13,8 @@
 	import TargetSheetModal from '$lib/components/TargetSheetModal.svelte';
 	import SettingsModal from '$lib/components/SettingsModal.svelte';
 	import ChecksModal from '$lib/components/ChecksModal.svelte';
+	import LocationsModal from '$lib/components/LocationsModal.svelte';
+	import HorizonEditor from '$lib/components/HorizonEditor.svelte';
 </script>
 
 <div class="flex h-full w-full bg-[#121214] overflow-hidden">
@@ -54,7 +56,9 @@
 <!-- 3. MODALES (OVERLAY) -->
 <MapModal />
 <ObservationDetail />
+<LocationsModal />
 <LocationModal />
 <TargetSheetModal />
 <SettingsModal />
 <ChecksModal />
+<HorizonEditor />

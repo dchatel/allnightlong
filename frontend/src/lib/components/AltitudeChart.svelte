@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { moonAltitude, moonIllumination, sunAltitude, targetAltitude, type Observer } from '$lib/astro';
+	import { moonAltitude, moonIllumination, sunAltitude, targetHorizontal, type Observer } from '$lib/astro';
+	import { horizonAt, type Horizon } from '$lib/state.svelte';
 
 	// Hauteur des cibles et de la Lune pendant la nuit, sur le même axe du temps (TU) et avec les mêmes
 	// marges que les graphes météo placés dessous : les heures se lisent à la verticale de l'un à l'autre.
@@ -10,6 +11,8 @@
 		t1,
 		windowStart = null,
 		windowEnd = null,
+		horizon = null,
+		minAltitude = null,
 		hoverTime = $bindable(null)
 	}: {
 		targets: { name: string; coords: { ra: number; dec: number } }[];
@@ -18,6 +21,9 @@
 		t1: number;
 		windowStart?: number | null;
 		windowEnd?: number | null;
+		// Horizon du lieu : obstacles dans la direction de la cible, et hauteur minimale d'observation
+		horizon?: Horizon | null;
+		minAltitude?: number | null;
 		hoverTime?: number | null;
 	} = $props();
 
@@ -69,7 +75,7 @@
 				t,
 				sun: sunAltitude(date, observer),
 				moon: moonAltitude(date, observer),
-				targets: groups.map(g => targetAltitude(g.coords, date, observer))
+				targets: groups.map(g => targetHorizontal(g.coords, date, observer))
 			});
 		}
 		return list;
@@ -87,6 +93,53 @@
 		return list;
 	});
 
+	// Hauteur de l'obstacle dans la direction de la cible, et nature (végétation ou non)
+	const obstacle = (az: number) => horizonAt(horizon, az);
+	const behindTrees = (az: number) => Boolean(horizon?.veg[Math.floor(((az % 360) + 360) % 360)]);
+
+	// Courbe d'une cible coupée en deux : visible (au-dessus de l'obstacle) et cachée (dessous)
+	function targetPaths(g: number) {
+		let visible = '', hidden = '';
+		let prev: 'v' | 'h' | null = null;
+		samples.forEach(s => {
+			const { alt, az } = s.targets[g];
+			if (alt < 0) { prev = null; return; }
+			const state = alt >= obstacle(az) ? 'v' : 'h';
+			const point = `${x(s.t).toFixed(1)},${y(alt).toFixed(1)}`;
+			// Le point de bascule appartient aux deux tronçons, pour que la courbe reste continue
+			if (state === 'v') visible += `${prev === 'v' ? 'L' : 'M'}${point}`;
+			else hidden += `${prev === 'h' ? 'L' : 'M'}${point}`;
+			if (prev && prev !== state) {
+				if (state === 'v') hidden += `L${point}`;
+				else visible += `L${point}`;
+			}
+			prev = state;
+		});
+		return { visible, hidden };
+	}
+
+	// Silhouette des obstacles dans la direction de la première cible, au fil de la nuit
+	let obstacleBands = $derived.by(() => {
+		if (!horizon || !groups.length) return [];
+		const bands: { d: string; veg: boolean }[] = [];
+		let current: { pts: string[]; veg: boolean } | null = null;
+		samples.forEach((s, i) => {
+			const az = s.targets[0].az;
+			const veg = behindTrees(az);
+			const top = `${x(s.t).toFixed(1)},${y(obstacle(az)).toFixed(1)}`;
+			if (!current || current.veg !== veg) {
+				if (current) { current.pts.push(top); bands.push(close(current)); }
+				current = { pts: [top], veg };
+			} else current.pts.push(top);
+			if (i === samples.length - 1) bands.push(close(current));
+		});
+		function close(c: { pts: string[]; veg: boolean }) {
+			const first = c.pts[0].split(',')[0], last = c.pts.at(-1)!.split(',')[0];
+			return { d: `M${first},${y(0)}L${c.pts.join('L')}L${last},${y(0)}Z`, veg: c.veg };
+		}
+		return bands;
+	});
+
 	// Points au-dessus de l'horizon seulement : sous 0°, la courbe s'interrompt
 	function path(values: number[]) {
 		let d = '';
@@ -102,7 +155,7 @@
 
 	let culminations = $derived(groups.map((_, g) => {
 		let best = samples[0];
-		for (const s of samples) if (s.targets[g] > best.targets[g]) best = s;
+		for (const s of samples) if (s.targets[g].alt > best.targets[g].alt) best = s;
 		return best;
 	}));
 
@@ -155,13 +208,30 @@
 			<text x={LEFT - 6} y={y(v) + 3} class="axis" text-anchor="end">{v}</text>
 		{/each}
 
+		<!-- Obstacles dans la direction de la cible (hachurés : végétation, en partie transparente) -->
+		<defs>
+			<pattern id="alt-veg-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+				<rect width="6" height="6" fill="#2f4a36" fill-opacity="0.75" />
+				<line x1="0" y1="0" x2="0" y2="6" stroke="#8fc79b" stroke-width="2" stroke-opacity="0.8" />
+			</pattern>
+		</defs>
+		{#each obstacleBands as band, k (k)}
+			<path d={band.d} fill={band.veg ? 'url(#alt-veg-hatch)' : '#4b4b55'} fill-opacity={band.veg ? 1 : 0.85} />
+		{/each}
+		{#if minAltitude != null}
+			<line x1={LEFT} x2={LEFT + plotW} y1={y(minAltitude)} y2={y(minAltitude)} class="min" />
+			<text x={LEFT + plotW - 4} y={y(minAltitude) - 4} class="minlabel" text-anchor="end">hauteur minimale {minAltitude}°</text>
+		{/if}
+
 		<path d={path(samples.map(s => s.moon))} fill="none" stroke={MOON} stroke-width="1.5" stroke-dasharray="4 3" />
 		{#each groups as g, i (g.names.join())}
-			<path d={path(samples.map(s => s.targets[i]))} fill="none" stroke={g.color} stroke-width="2" stroke-linejoin="round" />
+			{@const paths = targetPaths(i)}
+			<path d={paths.visible} fill="none" stroke={g.color} stroke-width="2" stroke-linejoin="round" />
+			<path d={paths.hidden} fill="none" stroke={g.color} stroke-width="1.5" stroke-dasharray="3 3" opacity="0.6" />
 			{@const top = culminations[i]}
-			{#if top && top.targets[i] > 0}
-				<circle cx={x(top.t)} cy={y(top.targets[i])} r="3.5" fill={g.color} stroke="#19191c" stroke-width="1.5" />
-				<text x={Math.min(x(top.t), LEFT + plotW - 60)} y={y(top.targets[i]) - 7} class="peak" text-anchor="middle">{hm(top.t)} · {Math.round(top.targets[i])}°</text>
+			{#if top && top.targets[i].alt > 0}
+				<circle cx={x(top.t)} cy={y(top.targets[i].alt)} r="3.5" fill={g.color} stroke="#19191c" stroke-width="1.5" />
+				<text x={Math.min(x(top.t), LEFT + plotW - 60)} y={y(top.targets[i].alt) - 7} class="peak" text-anchor="middle">{hm(top.t)} · {Math.round(top.targets[i].alt)}°</text>
 			{/if}
 		{/each}
 
@@ -181,8 +251,13 @@
 				<div class="flex items-center gap-2">
 					<span class="w-2.5 h-0.5 rounded" style="background: {g.color}"></span>
 					<span class="flex-1 text-surface-300 truncate">{g.names.join(' + ')}</span>
-					<span class="text-white tabular-nums">{Math.round(hovered.targets[i])}°</span>
+					<span class="text-white tabular-nums">{Math.round(hovered.targets[i].alt)}°</span>
 				</div>
+				{#if horizon && hovered.targets[i].alt >= 0 && hovered.targets[i].alt < obstacle(hovered.targets[i].az)}
+					<div class="text-yellow-500 pl-4.5">{behindTrees(hovered.targets[i].az) ? 'derrière la végétation' : 'cachée par un obstacle'} ({Math.round(obstacle(hovered.targets[i].az))}°)</div>
+				{:else if minAltitude != null && hovered.targets[i].alt < minAltitude && hovered.targets[i].alt >= 0}
+					<div class="text-yellow-500 pl-4.5">sous la hauteur minimale</div>
+				{/if}
 			{/each}
 			<div class="flex items-center gap-2">
 				<span class="w-2.5 h-0.5 rounded" style="background: {MOON}"></span>
@@ -203,6 +278,8 @@
 	.grid { stroke: #ffffff10; stroke-width: 1; }
 	.window { fill: rgb(99 102 241 / 0.16); }
 	.crosshair { stroke: #a1a1aa; stroke-width: 1; stroke-dasharray: 3 3; }
+	.min { stroke: #c98500; stroke-width: 1.2; stroke-dasharray: 5 4; }
+	.minlabel { fill: #c98500; font-size: 9.5px; }
 	.tooltip {
 		position: absolute;
 		width: 190px;
