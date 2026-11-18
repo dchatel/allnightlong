@@ -53,3 +53,6 @@ backend/*.exe
 backend/warn-allnightlong-backend.txt
 backend/xref-allnightlong-backend.html
 backend/allnightlong.db
+
+# --- Reprise des données (lot 6) : copies de bases et comptes rendus, données personnelles ---
+migration-out/
