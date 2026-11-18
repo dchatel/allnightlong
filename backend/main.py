@@ -22,6 +22,10 @@ from pydantic import BaseModel
 import platform
 from pathlib import Path
 
+# Modules voisins (fits.py), y compris quand Python est lancé en mode isolé (-I)
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fits  # noqa: E402
+
 # L'encodage Windows par défaut ferait planter print() sur certains noms d'utilisateur
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace")
@@ -1140,6 +1144,43 @@ def save_weather(session_id: int, readings: List[WeatherReadingSchema]):
     readings = read_weather(conn, session_id)
     conn.close()
     return readings
+
+
+# ================= PRÉ-REMPLISSAGE DEPUIS UN FITS =================
+class FitsRequest(BaseModel):
+    path: str
+
+# Lieu enregistré qui correspond aux coordonnées du Seestar, à cette distance près
+FITS_LOCATION_RADIUS_M = 300
+
+@app.post("/api/fits/read")
+def read_fits(request: FitsRequest):
+    """Résumé d'une capture à partir d'un FITS du Seestar, avec la cible et le lieu retrouvés dans la base."""
+    path = Path(request.path)
+    if path.suffix.lower() not in fits.FITS_SUFFIXES or not path.is_file():
+        raise HTTPException(status_code=422, detail="Choisissez un fichier FITS (.fit) du Seestar.")
+    try:
+        summary = fits.capture_summary(path)
+    except (OSError, ValueError, KeyError) as err:
+        raise HTTPException(status_code=422, detail=f"FITS illisible : {err}")
+
+    conn = connect()
+    # Cibles : l'objet de l'en-tête, puis toutes les désignations citées dans le nom du dossier
+    # (« NGC 147 - NGC 185 »). L'objet vient en premier ; « Unknown » ou une étoile guide ne trouvent rien.
+    wanted = [fits.normalize_name(summary["object"])] + sorted(fits.name_tokens(summary["folder"]))
+    by_name = {fits.normalize_name(name): tid for tid, name in conn.execute("SELECT id, name FROM targets")}
+    summary["targetIds"] = list(dict.fromkeys(by_name[w] for w in wanted if w in by_name))
+    summary["locationId"] = None
+    if summary["lat"] is not None and summary["lon"] is not None:
+        best = None
+        for lid, lat, lon in conn.execute("SELECT id, lat, lon FROM locations"):
+            metres = math.hypot((lat - summary["lat"]) * 111_320,
+                                (lon - summary["lon"]) * 111_320 * math.cos(math.radians(lat)))
+            if metres <= FITS_LOCATION_RADIUS_M and (best is None or metres < best[0]):
+                best = (metres, lid)
+        summary["locationId"] = best[1] if best else None
+    conn.close()
+    return summary
 
 
 # ================= DONNÉES À VÉRIFIER =================

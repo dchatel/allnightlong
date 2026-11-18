@@ -134,6 +134,22 @@ export interface WeatherReading {
 	edited: boolean;
 }
 
+// Résumé d'une capture lu dans un FITS du Seestar (heures en TU)
+export interface FitsSummary {
+	start: string;
+	end: string;
+	startExact: boolean;
+	object: string;
+	filter: string;
+	instrument: string;
+	sensorTemp: number | null;
+	exposure: number;
+	frames: number | null;
+	preview: string;
+	targetIds: number[];
+	locationId: number | null;
+}
+
 export function emptyObservationTarget(targetId: number | null = null): ObservationTarget {
 	return { targetId, altitude: '', imgGood: 0, imgPass: 0, imgBad: 0, notes: '' };
 }
@@ -338,6 +354,22 @@ class AppState {
 
 		const appWindow = getCurrentWindow();
 		await appWindow.close();
+	}
+
+	// --- PRÉ-REMPLISSAGE DEPUIS UN FITS ---
+
+	async readFits(path: string): Promise<FitsSummary | null> {
+		try {
+			const res = await apiFetch('/fits/read', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ path })
+			});
+			return await res.json();
+		} catch (err) {
+			await showApiError('Lecture du FITS impossible', err);
+			return null;
+		}
 	}
 
 	// --- DONNÉES À VÉRIFIER ---
