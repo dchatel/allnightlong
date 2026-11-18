@@ -1,6 +1,6 @@
 [package]
 name = "allnightlong"
-version = "0.1.11"
+version = "1.0.0"
 description = "An astronomical report app"
 authors = ["David Chatel"]
 license = ""
