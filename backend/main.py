@@ -310,7 +310,7 @@ def guess_image_details(path: str):
 
 
 # ================= INITIALISATION & MIGRATIONS =================
-LATEST_SCHEMA_VERSION = 6
+LATEST_SCHEMA_VERSION = 7
 
 def migrate_to_v4(conn):
     # Reconstruction de la table observations : SQLite ne sait pas retirer une clé étrangère.
@@ -583,6 +583,18 @@ def init_db():
         cursor.execute("UPDATE schema_version SET version = 6")
         current_version = 6
         print("Migration vers DB v6 (relevés météo) effectuée.")
+
+    # --- VERSION 7: Données à vérifier marquées « c'est normal » ---
+    if current_version < 7:
+        cursor.execute("""
+            CREATE TABLE check_dismissals (
+                key TEXT PRIMARY KEY,
+                dismissed_at TEXT NOT NULL
+            );
+        """)
+        cursor.execute("UPDATE schema_version SET version = 7")
+        current_version = 7
+        print("Migration vers DB v7 (données à vérifier) effectuée.")
     conn.commit()
     conn.close()
 
@@ -1128,6 +1140,47 @@ def save_weather(session_id: int, readings: List[WeatherReadingSchema]):
     readings = read_weather(conn, session_id)
     conn.close()
     return readings
+
+
+# ================= DONNÉES À VÉRIFIER =================
+# Les contrôles sont calculés par l'interface (ils ont besoin des éphémérides) ; la base retient seulement
+# les signalements que l'utilisateur a marqués « c'est normal », par une clé stable.
+class CheckDismissal(BaseModel):
+    key: str
+    dismissed: bool = True
+
+@app.get("/api/checks/dismissed", response_model=List[str])
+def get_dismissed_checks():
+    conn = connect()
+    keys = [k for (k,) in conn.execute("SELECT key FROM check_dismissals ORDER BY key")]
+    conn.close()
+    return keys
+
+@app.post("/api/checks/dismissed", response_model=List[str])
+def set_dismissed_check(dismissal: CheckDismissal):
+    conn = connect()
+    if dismissal.dismissed:
+        conn.execute("INSERT OR IGNORE INTO check_dismissals (key, dismissed_at) VALUES (?, ?)",
+                     (dismissal.key, datetime.now().strftime("%Y-%m-%d %H:%M")))
+    else:
+        conn.execute("DELETE FROM check_dismissals WHERE key = ?", (dismissal.key,))
+    conn.commit()
+    conn.close()
+    return get_dismissed_checks()
+
+# Tous les relevés, pour repérer un même relevé recopié sur deux nuits
+class SessionWeatherReading(WeatherReadingSchema):
+    sessionId: int
+
+@app.get("/api/weather", response_model=List[SessionWeatherReading])
+def get_all_weather():
+    conn = connect()
+    rows = conn.execute(f"""
+        SELECT session_id, time_utc, {', '.join(WEATHER_COLUMNS)}, source, edited FROM weather_readings ORDER BY session_id, time_utc
+    """).fetchall()
+    conn.close()
+    return [SessionWeatherReading(sessionId=r[0], time=r[1], **dict(zip(WEATHER_FIELDS, r[2:12])), source=r[12], edited=bool(r[13]))
+            for r in rows]
 
 
 if __name__ == "__main__":

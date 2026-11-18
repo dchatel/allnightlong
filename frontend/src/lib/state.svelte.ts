@@ -3,6 +3,7 @@ import { dev } from '$app/environment';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { message, save } from '@tauri-apps/plugin-dialog';
 import { convertFileSrc } from '@tauri-apps/api/core';
+import { runChecks } from '$lib/checks';
 import { slide, fade } from 'svelte/transition';
 
 // En production, le port est annoncé par le backend à son démarrage
@@ -199,6 +200,10 @@ class AppState {
 	isEditingObservation = $state(false);
 	showMapModal = $state(false);
 	showSettings = $state(false);
+	showChecks = $state(false);
+	// Données à vérifier : signalements marqués « c'est normal », et tous les relevés météo
+	dismissedChecks = $state<string[]>([]);
+	allWeather = $state<(WeatherReading & { sessionId: number })[]>([]);
 	settings = $state({ imagesFolder: '', weatherMarginHours: 1 });
 
 	// Relevés météo par session, et état de leur récupération ("" = rien en cours)
@@ -237,7 +242,7 @@ class AppState {
 				const res = apiUrl ? await apiFetch('/status') : null;
 				if (res?.ok) {
 					console.log("Backend is ready.");
-					await Promise.all([this.loadTargets(), this.loadLocations(), this.loadObservations(), this.loadSettings()]);
+					await Promise.all([this.loadTargets(), this.loadLocations(), this.loadObservations(), this.loadSettings(), this.loadChecksData()]);
 					this.isBackendReady = true;
 					break;
 				}
@@ -333,6 +338,45 @@ class AppState {
 
 		const appWindow = getCurrentWindow();
 		await appWindow.close();
+	}
+
+	// --- DONNÉES À VÉRIFIER ---
+
+	async loadChecksData() {
+		try {
+			const [dismissed, weather] = await Promise.all([apiFetch('/checks/dismissed'), apiFetch('/weather')]);
+			this.dismissedChecks = await dismissed.json();
+			this.allWeather = await weather.json();
+		} catch (err) {
+			console.warn('Données à vérifier non chargées :', err);
+		}
+	}
+
+	get checks() {
+		return runChecks({ observations: this.observations, targets: this.targets, locations: this.locations, weather: this.allWeather });
+	}
+
+	get openChecks() {
+		return this.checks.filter(c => !this.dismissedChecks.includes(c.key));
+	}
+
+	async setCheckDismissed(key: string, dismissed: boolean) {
+		try {
+			const res = await apiFetch('/checks/dismissed', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ key, dismissed })
+			});
+			this.dismissedChecks = await res.json();
+		} catch (err) {
+			await showApiError('Enregistrement impossible', err);
+		}
+	}
+
+	// Depuis l'écran des vérifications : le rapport s'ouvre, l'écran se ferme
+	openObservationFromChecks(id: number) {
+		this.showChecks = false;
+		this.openObservation(id);
 	}
 
 	// --- RÉGLAGES ---
