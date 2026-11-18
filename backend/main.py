@@ -25,6 +25,7 @@ from pathlib import Path
 # Modules voisins (fits.py), y compris quand Python est lancé en mode isolé (-I)
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fits  # noqa: E402
+import horizon  # noqa: E402
 
 # L'encodage Windows par défaut ferait planter print() sur certains noms d'utilisateur
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -184,6 +185,12 @@ class WeatherReadingSchema(BaseModel):
 
 ObservationSchema.model_rebuild()
 
+# Horizon d'un lieu : hauteur (°) degré par degré d'azimut, et obstacle végétal ou non
+class HorizonSchema(BaseModel):
+    alt: List[float]
+    veg: List[bool] = []
+    source: str = ""
+
 class LocationSchema(BaseModel):
     id: Optional[int] = None
     label: str
@@ -192,6 +199,11 @@ class LocationSchema(BaseModel):
     elevationM: Optional[float] = None
     bortle: Optional[float] = None
     notes: str = ""
+    # Un lieu est un emplacement d'instrument : hauteur de l'instrument au-dessus du sol, hauteur
+    # minimale d'observation et horizon (obstacles) vus depuis cet emplacement
+    instrumentHeight: float = 1.0
+    minAltitude: Optional[float] = None
+    horizon: Optional[HorizonSchema] = None
 
 
 class ExportRequest(BaseModel):
@@ -314,7 +326,7 @@ def guess_image_details(path: str):
 
 
 # ================= INITIALISATION & MIGRATIONS =================
-LATEST_SCHEMA_VERSION = 7
+LATEST_SCHEMA_VERSION = 8
 
 def migrate_to_v4(conn):
     # Reconstruction de la table observations : SQLite ne sait pas retirer une clé étrangère.
@@ -599,6 +611,15 @@ def init_db():
         cursor.execute("UPDATE schema_version SET version = 7")
         current_version = 7
         print("Migration vers DB v7 (données à vérifier) effectuée.")
+
+    # --- VERSION 8: Horizon du lieu ---
+    if current_version < 8:
+        cursor.execute("ALTER TABLE locations ADD COLUMN instrument_height REAL DEFAULT 1.0")
+        cursor.execute("ALTER TABLE locations ADD COLUMN min_altitude REAL")
+        cursor.execute("ALTER TABLE locations ADD COLUMN horizon TEXT")
+        cursor.execute("UPDATE schema_version SET version = 8")
+        current_version = 8
+        print("Migration vers DB v8 (horizon du lieu) effectuée.")
     conn.commit()
     conn.close()
 
@@ -858,13 +879,17 @@ def save_settings(settings: SettingsSchema):
 
 
 # ================= LIEUX =================
+LOCATION_COLUMNS = "id, label, lat, lon, elevation_m, bortle, notes, instrument_height, min_altitude, horizon"
+
 def location_from_row(r) -> LocationSchema:
-    return LocationSchema(id=r[0], label=r[1], lat=r[2], lon=r[3], elevationM=r[4], bortle=r[5], notes=r[6] or "")
+    return LocationSchema(id=r[0], label=r[1], lat=r[2], lon=r[3], elevationM=r[4], bortle=r[5], notes=r[6] or "",
+                          instrumentHeight=r[7] if r[7] is not None else 1.0, minAltitude=r[8],
+                          horizon=HorizonSchema(**json.loads(r[9])) if r[9] else None)
 
 @app.get("/api/locations", response_model=List[LocationSchema])
 def get_locations():
     conn = sqlite3.connect(DB_PATH)
-    rows = conn.execute("SELECT id, label, lat, lon, elevation_m, bortle, notes FROM locations ORDER BY label COLLATE NOCASE").fetchall()
+    rows = conn.execute(f"SELECT {LOCATION_COLUMNS} FROM locations ORDER BY label COLLATE NOCASE").fetchall()
     conn.close()
     return [location_from_row(r) for r in rows]
 
@@ -879,14 +904,25 @@ def save_location(location: LocationSchema):
 
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    values = (location.label, location.lat, location.lon, location.elevationM, location.bortle, location.notes)
+    if location.horizon and len(location.horizon.alt) != 360:
+        conn.close()
+        raise HTTPException(status_code=422, detail="L'horizon doit compter une valeur par degré (360).")
+    horizon_json = location.horizon.model_dump_json() if location.horizon else None
+    values = (location.label, location.lat, location.lon, location.elevationM, location.bortle, location.notes,
+              location.instrumentHeight, location.minAltitude, horizon_json)
     if location.id:
-        cursor.execute("UPDATE locations SET label=?, lat=?, lon=?, elevation_m=?, bortle=?, notes=? WHERE id=?", (*values, location.id))
+        cursor.execute("""
+            UPDATE locations SET label=?, lat=?, lon=?, elevation_m=?, bortle=?, notes=?, instrument_height=?,
+                   min_altitude=?, horizon=? WHERE id=?
+        """, (*values, location.id))
         if cursor.rowcount == 0:
             conn.close()
             raise HTTPException(status_code=404, detail="Lieu introuvable.")
     else:
-        cursor.execute("INSERT INTO locations (label, lat, lon, elevation_m, bortle, notes) VALUES (?, ?, ?, ?, ?, ?)", values)
+        cursor.execute("""
+            INSERT INTO locations (label, lat, lon, elevation_m, bortle, notes, instrument_height, min_altitude, horizon)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, values)
         location.id = cursor.lastrowid
     conn.commit()
     conn.close()
@@ -911,6 +947,31 @@ def fetch_json(url: str, params: dict):
             return json.load(response)
     except (urllib.error.URLError, TimeoutError, ValueError) as err:
         raise HTTPException(status_code=502, detail=f"Service en ligne injoignable : {err}")
+
+def fetch_bytes(url: str, params: dict) -> bytes:
+    request = urllib.request.Request(f"{url}?{urllib.parse.urlencode(params)}", headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(request, timeout=60, context=SSL_CONTEXT) as response:
+            return response.read()
+    except (urllib.error.URLError, TimeoutError) as err:
+        raise HTTPException(status_code=502, detail=f"Service en ligne injoignable : {err}")
+
+class LidarHorizonRequest(BaseModel):
+    lat: float
+    lon: float
+    instrumentHeight: float = 1.0
+
+@app.post("/api/geo/lidar-horizon", response_model=HorizonSchema)
+def lidar_horizon(request: LidarHorizonRequest):
+    """Horizon d'un emplacement calculé depuis le LiDAR HD de l'IGN (France uniquement)."""
+    if not 0 <= request.instrumentHeight <= 20:
+        raise HTTPException(status_code=422, detail="Hauteur de l'instrument invalide.")
+    try:
+        result = horizon.compute_horizon(request.lat, request.lon, request.instrumentHeight, fetch_bytes)
+    except ValueError as err:
+        raise HTTPException(status_code=422, detail=str(err))
+    return HorizonSchema(alt=result["alt"], veg=result["veg"], source=result["source"])
+
 
 # Nom de commune le plus précis disponible, proposé comme libellé du lieu
 def place_name(address: dict) -> str:

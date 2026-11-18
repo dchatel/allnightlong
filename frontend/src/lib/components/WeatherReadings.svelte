@@ -19,9 +19,10 @@
 	let status = $derived(sessionId ? appState.weatherStatus[sessionId] ?? '' : '');
 	let loading = $derived(status === 'loading');
 
+	let location = $derived(appState.locationById(obs.locationId));
+
 	// Lieu : celui de la session, sinon l'ancienne saisie en texte libre
 	let observer = $derived.by(() => {
-		const location = appState.locationById(obs.locationId);
 		const point = location ?? parseLegacyCoords(obs.legacyLocation);
 		return point ? makeObserver(point.lat, point.lon, location?.elevationM) : null;
 	});
@@ -99,7 +100,8 @@
 
 		{#if observer && bounds && targets.length}
 			<div class="mb-2">
-				<AltitudeChart {targets} {observer} t0={bounds[0]} t1={bounds[1]} {windowStart} {windowEnd} bind:hoverTime />
+				<AltitudeChart {targets} {observer} t0={bounds[0]} t1={bounds[1]} {windowStart} {windowEnd}
+					horizon={location?.horizon ?? null} minAltitude={location?.minAltitude ?? null} bind:hoverTime />
 			</div>
 		{:else if !observer}
 			<p class="text-xs text-surface-500 mb-2">Choisissez un lieu pour afficher la hauteur des cibles.</p>

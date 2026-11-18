@@ -3,9 +3,9 @@
 	import { fade } from 'svelte/transition';
 	import 'leaflet/dist/leaflet.css';
 	import type { Map as LeafletMap, Marker } from 'leaflet';
+	import { baseLayers, lidarOverlay } from '$lib/mapLayers';
+	import HorizonView from '$lib/components/HorizonView.svelte';
 
-	const TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
-	const TILE_ATTRIBUTION = '© <a href="https://www.openstreetmap.org/copyright">contributeurs OpenStreetMap</a>';
 	const FRANCE = { lat: 46.6, lon: 2.4, zoom: 6 };
 	const PLACE_ZOOM = 17;
 
@@ -20,6 +20,9 @@
 	let searchQuery = $state('');
 	let searchResults = $state<{ address: string; lat: number; lon: number }[]>([]);
 	let saving = $state(false);
+	// L'emplacement a bougé depuis le calcul de l'horizon : il faut le recalculer
+	let horizonStale = $state(false);
+	let computing = $state(false);
 
 	let leaflet: typeof import('leaflet') | null = null;
 	let map: LeafletMap | null = null;
@@ -32,6 +35,7 @@
 		if (editor) {
 			form = { ...editor.form };
 			labelTouched = Boolean(editor.form.label);
+			horizonStale = false;
 			address = '';
 			lookupStatus = '';
 			searchQuery = '';
@@ -65,9 +69,11 @@
 
 	// Nouveau point : coordonnées, repère, puis adresse et altitude demandées en ligne
 	async function setPoint(lat: number, lon: number) {
-		form.lat = round(lat, 5);
-		form.lon = round(lon, 5);
+		// Six décimales : environ 10 cm, l'horizon d'un jardin clos dépend de chaque mètre
+		form.lat = round(lat, 6);
+		form.lon = round(lon, 6);
 		placeMarker(form.lat, form.lon);
+		if (form.horizon) horizonStale = true;
 		await lookup();
 	}
 
@@ -121,8 +127,11 @@
 			const center = reference ? [reference.lat, reference.lon] : [FRANCE.lat, FRANCE.lon];
 			const zoom = hasPoint ? PLACE_ZOOM : reference ? 12 : FRANCE.zoom;
 
-			map = L.map(node).setView(center as [number, number], zoom);
-			L.tileLayer(TILE_URL, { maxZoom: 19, attribution: TILE_ATTRIBUTION }).addTo(map);
+			map = L.map(node, { maxZoom: 21 }).setView(center as [number, number], zoom);
+			const layers = baseLayers(L);
+			layers.Plan.addTo(map);
+			// Photo aérienne et relief LiDAR : pour placer l'instrument à un mètre près, entre les murs
+			L.control.layers(layers, { 'Relief LiDAR (murs, arbres)': lidarOverlay(L) }, { position: 'bottomleft' }).addTo(map);
 			map.attributionControl.setPrefix(false);
 			map.on('click', (e) => setPoint(e.latlng.lat, e.latlng.lng));
 
@@ -143,6 +152,33 @@
 		};
 	}
 
+	async function computeHorizon() {
+		if (!hasPoint) return;
+		computing = true;
+		const result = await appState.lidarHorizon(form.lat, form.lon, Number(form.instrumentHeight) || 1);
+		computing = false;
+		if (result) {
+			form.horizon = result;
+			horizonStale = false;
+		}
+	}
+
+	function editHorizon() {
+		appState.horizonEditor = {
+			horizon: form.horizon,
+			lat: form.lat,
+			lon: form.lon,
+			instrumentHeight: Number(form.instrumentHeight) || 1,
+			minAltitude: form.minAltitude,
+			label: form.label,
+			onApply: (horizon, minAltitude) => {
+				form.horizon = horizon;
+				form.minAltitude = minAltitude;
+				horizonStale = false;
+			}
+		};
+	}
+
 	async function save() {
 		if (!canSave) return;
 		saving = true;
@@ -150,14 +186,16 @@
 			...form,
 			label: form.label.trim(),
 			elevationM: Number.isFinite(form.elevationM) ? form.elevationM : null,
-			bortle: Number.isFinite(form.bortle) ? form.bortle : null
+			bortle: Number.isFinite(form.bortle) ? form.bortle : null,
+			instrumentHeight: Number.isFinite(form.instrumentHeight) ? form.instrumentHeight : 1,
+			minAltitude: Number.isFinite(form.minAltitude) ? form.minAltitude : null
 		});
 		saving = false;
 	}
 
 	// Phase de capture : Échap ferme ce lieu sans atteindre le rapport ouvert en dessous
 	function handleKeydown(e: KeyboardEvent) {
-		if (e.key !== 'Escape' || !appState.locationEditor) return;
+		if (e.key !== 'Escape' || !appState.locationEditor || appState.horizonEditor) return;
 		e.stopPropagation();
 		appState.closeLocationEditor();
 	}
@@ -210,7 +248,7 @@
 				</div>
 
 				<!-- Informations du lieu -->
-				<div class="w-80 shrink-0 border-l border-[#333] p-5 flex flex-col gap-4 overflow-y-auto">
+				<div class="w-96 shrink-0 border-l border-[#333] p-5 flex flex-col gap-4 overflow-y-auto">
 					{#if !hasPoint}
 						<p class="text-xs text-indigo-300">Cliquez sur la carte à l'endroit de l'observation. Le repère peut ensuite être déplacé.</p>
 					{/if}
@@ -240,9 +278,42 @@
 							<input id="loc-bortle" type="number" step="0.5" min="1" max="9" class="form-input" bind:value={form.bortle} />
 						</div>
 					</div>
+					<div class="grid grid-cols-2 gap-2">
+						<div>
+							<label for="loc-instrument" class="block text-[10px] text-surface-400 mb-1">Hauteur de l'instrument (m)</label>
+							<input id="loc-instrument" type="number" step="0.1" min="0" max="20" class="form-input" bind:value={form.instrumentHeight}
+								oninput={() => { if (form.horizon) horizonStale = true; }} />
+						</div>
+						<div>
+							<label for="loc-min" class="block text-[10px] text-surface-400 mb-1">Hauteur minimale (°)</label>
+							<input id="loc-min" type="number" step="1" min="0" max="60" class="form-input" bind:value={form.minAltitude} placeholder="—" />
+						</div>
+					</div>
+
+					<!-- Horizon vu depuis l'emplacement -->
+					<div class="bg-[#1e1e21] border border-[#333] rounded-lg p-3 flex flex-col gap-2">
+						<span class="text-[10px] uppercase font-bold text-surface-400">Horizon</span>
+						{#if form.horizon}
+							<HorizonView mode="strip" alt={form.horizon.alt} veg={form.horizon.veg} minAltitude={form.minAltitude} />
+							<span class="text-[10px] text-surface-500">{form.horizon.source}</span>
+						{:else}
+							<p class="text-[11px] text-surface-400">Aucun horizon : les cibles sont considérées visibles jusqu'à l'horizon plat.</p>
+						{/if}
+						{#if horizonStale}
+							<p class="text-[11px] text-yellow-500">L'emplacement ou la hauteur de l'instrument a changé : recalculez l'horizon.</p>
+						{/if}
+						<div class="flex flex-wrap gap-2">
+							<button type="button" onclick={computeHorizon} disabled={!hasPoint || computing} class="btn-secondary text-xs disabled:opacity-40"
+								title="Murs, bâtiments, arbres et relief, d'après le relevé laser aérien de l'IGN (France)">
+								{computing ? 'Calcul…' : 'Calculer depuis le LiDAR HD'}
+							</button>
+							<button type="button" onclick={editHorizon} disabled={!hasPoint} class="btn-secondary text-xs disabled:opacity-40">Modifier l'horizon…</button>
+						</div>
+					</div>
+
 					<div>
 						<label for="loc-notes" class="block text-[10px] text-surface-400 mb-1">Notes</label>
-						<textarea id="loc-notes" class="form-input min-h-20 resize-none py-2" bind:value={form.notes}></textarea>
+						<textarea id="loc-notes" class="form-input min-h-16 resize-none py-2" bind:value={form.notes}></textarea>
 					</div>
 					{#if lookupStatus}
 						<p class="text-[11px] text-surface-400">{lookupStatus}</p>

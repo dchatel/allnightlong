@@ -1,7 +1,7 @@
 // Données à vérifier : règles simples qui repèrent des saisies suspectes. Chaque signalement a une clé
 // stable, pour qu'un « c'est normal » reste mémorisé tant que la donnée ne change pas de nature.
-import { makeObserver, moonIllumination, targetAltitude, targetCoords, utcDate } from '$lib/astro';
-import { formatDate, parseLegacyCoords, type ObservationTarget, type WeatherReading } from '$lib/state.svelte';
+import { makeObserver, moonIllumination, targetAltitude, targetCoords, targetHorizontal, utcDate } from '$lib/astro';
+import { formatDate, horizonAt, parseLegacyCoords, type ObservationTarget, type WeatherReading } from '$lib/state.svelte';
 
 export interface Check {
 	key: string;
@@ -17,6 +17,7 @@ export const RULES: Record<string, string> = {
 	weather: 'Même relevé météo sur deux nuits',
 	moon: 'Phase de Lune notée différente du calcul',
 	altitude: 'Hauteur saisie différente du calcul',
+	horizon: 'Cible derrière l’horizon du lieu',
 	times: 'Heures manquantes ou durée anormale',
 	location: 'Observation sans lieu',
 	images: 'Observation sans image'
@@ -25,6 +26,7 @@ export const RULES: Record<string, string> = {
 const MAX_HOURS = 14;
 const MOON_TOLERANCE = 15; // points de %
 const ALTITUDE_MARGIN = 5; // degrés autour de la plage calculée
+const HIDDEN_SHARE = 0.25; // part du créneau à partir de laquelle une cible cachée est signalée
 
 interface Inputs {
 	observations: any[];
@@ -90,6 +92,44 @@ export function runChecks({ observations, targets, locations, weather }: Inputs)
 			const value = Number(noted[1]);
 			if (Math.abs(value - computed) > MOON_TOLERANCE) {
 				checks.push({ key: `moon:${obs.id}`, rule: 'moon', title: label(obs), detail: `Note : ${value} % ; calcul : ${computed} % au milieu du créneau. Note recopiée d'une autre nuit ?`, observationIds: [obs.id] });
+			}
+		}
+
+		// --- Cible derrière un obstacle du lieu (ou sous la hauteur minimale) pendant une bonne part du créneau
+		const location = locations.find(l => l.id === obs.locationId);
+		if ((location?.horizon || location?.minAltitude != null) && t1 > t0) {
+			const total = Math.round((t1 - t0) / 60_000);
+			// Une ligne par observation : les cibles d'un même champ, cachées le même temps, sont regroupées
+			const hiddenBy = new Map<string, { names: string[]; trees: boolean }>();
+			for (const row of obs.targets as ObservationTarget[]) {
+				const coords = targetCoords(targetById.get(row.targetId));
+				if (!coords) continue;
+				let samples = 0, hidden = 0, trees = 0;
+				for (let t = t0; t <= t1; t += 10 * 60_000) {
+					const { alt, az } = targetHorizontal(coords, new Date(t), observer);
+					const obstacle = horizonAt(location.horizon, az);
+					samples++;
+					if (alt < Math.max(obstacle, location.minAltitude ?? 0)) {
+						hidden++;
+						if (alt < obstacle && location.horizon?.veg[Math.floor(((az % 360) + 360) % 360)]) trees++;
+					}
+				}
+				if (!samples || hidden / samples < HIDDEN_SHARE) continue;
+				const minutes = Math.round(((hidden / samples) * total) / 5) * 5;
+				const key = String(minutes);
+				const entry = hiddenBy.get(key) ?? { names: [], trees: false };
+				entry.names.push(targetById.get(row.targetId)?.name ?? '?');
+				entry.trees ||= trees > hidden / 2;
+				hiddenBy.set(key, entry);
+			}
+			if (hiddenBy.size) {
+				const parts = [...hiddenBy].map(([minutes, e]) =>
+					`${e.names.join(', ')} : environ ${minutes} min sur ${total}${e.trees ? ' (surtout de la végétation, en partie transparente)' : ''}`);
+				checks.push({
+					key: `horizon:${obs.id}`, rule: 'horizon', title: label(obs),
+					detail: `Derrière l'horizon de « ${location.label} » ou sous sa hauteur minimale. ${parts.join(' ; ')}. Explique peut-être des poses rejetées.`,
+					observationIds: [obs.id]
+				});
 			}
 		}
 

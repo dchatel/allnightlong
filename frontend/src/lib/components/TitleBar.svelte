@@ -16,6 +16,10 @@
   <div class="logo">🔭 AwakeTonight</div>
   
   <div class="window-controls">
+    <button class="control-btn" onclick={() => (appState.showLocations = true)} title="Lieux d'observation">
+      <svg width="16" height="16" viewBox="0 0 24 24"><path fill="white" d="M12 2a7 7 0 0 0-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6.5a2.5 2.5 0 0 1 0 5z"/></svg>
+    </button>
+
     <button class="control-btn checks-btn" onclick={() => (appState.showChecks = true)} title="Données à vérifier">
       <svg width="16" height="16" viewBox="0 0 24 24"><path fill="white" d="M9.5 3a6.5 6.5 0 0 1 5.25 10.33l5.46 5.46-1.42 1.42-5.46-5.46A6.5 6.5 0 1 1 9.5 3zm0 2a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9z"/></svg>
       {#if appState.isBackendReady && appState.openChecks.length}

@@ -79,6 +79,14 @@ export function targetAltitude(coords: { ra: number; dec: number }, date: Date, 
 	return HorizonFromVector(local, 'normal').lat;
 }
 
+// Hauteur et azimut (degrés depuis le nord, vers l'est) : pour savoir derrière quel obstacle passe la cible
+export function targetHorizontal(coords: { ra: number; dec: number }, date: Date, observer: Observer) {
+	const vector = VectorFromSphere(new Spherical(coords.dec, coords.ra * 15, 1), date);
+	const local = RotateVector(Rotation_EQJ_HOR(date, observer), vector);
+	const sphere = HorizonFromVector(local, 'normal');
+	return { alt: sphere.lat, az: sphere.lon };
+}
+
 export function sunAltitude(date: Date, observer: Observer) {
 	const eq = Equator(Body.Sun, date, observer, true, true);
 	return Horizon(date, observer, eq.ra, eq.dec, 'normal').altitude;

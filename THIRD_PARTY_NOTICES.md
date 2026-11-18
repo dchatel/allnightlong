@@ -40,4 +40,6 @@ Les fonds de carte, les adresses et les recherches de lieux viennent d'OpenStree
 (© contributeurs OpenStreetMap, données sous licence ODbL : https://www.openstreetmap.org/copyright),
 via les serveurs de tuiles et le service Nominatim de la fondation OpenStreetMap.
 L'altitude d'un lieu est fournie par Open-Meteo (https://open-meteo.com).
+La photo aérienne, le relief LiDAR et l'horizon calculé d'un lieu viennent de la Géoplateforme de l'IGN
+(BD ORTHO et LiDAR HD, © IGN, Licence Ouverte Etalab 2.0 : https://geoservices.ign.fr/cgu-licences).
 Ces données sont consultées en ligne et ne sont pas incluses dans l'application.

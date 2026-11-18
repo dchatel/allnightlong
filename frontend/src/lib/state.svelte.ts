@@ -51,6 +51,35 @@ export interface Location {
 	elevationM: number | null;
 	bortle: number | null;
 	notes: string;
+	// Un lieu est un emplacement d'instrument : hauteur de l'instrument, hauteur minimale, horizon
+	instrumentHeight: number;
+	minAltitude: number | null;
+	horizon: Horizon | null;
+}
+
+// Hauteur de l'horizon (°) degré par degré d'azimut (360 valeurs), et obstacle végétal ou non
+export interface Horizon {
+	alt: number[];
+	veg: boolean[];
+	source: string;
+}
+
+interface HorizonEditor {
+	horizon: Horizon | null;
+	lat: number;
+	lon: number;
+	instrumentHeight: number;
+	minAltitude: number | null;
+	label: string;
+	onApply: (horizon: Horizon | null, minAltitude: number | null) => void;
+}
+
+// Hauteur de l'horizon dans une direction (azimut en degrés, interpolé entre deux degrés)
+export function horizonAt(horizon: Horizon | null | undefined, azimuth: number) {
+	if (!horizon) return 0;
+	const a = ((azimuth % 360) + 360) % 360;
+	const i = Math.floor(a), t = a - i;
+	return horizon.alt[i] * (1 - t) + horizon.alt[(i + 1) % 360] * t;
 }
 
 interface LocationEditor {
@@ -198,6 +227,9 @@ class AppState {
 
 	// Fenêtre de création / modification d'un lieu (null = fermée)
 	locationEditor = $state<LocationEditor | null>(null);
+	// Liste des lieux, et éditeur d'horizon en plein écran
+	showLocations = $state(false);
+	horizonEditor = $state<HorizonEditor | null>(null);
 
 	// Fiche d'une cible ouverte par-dessus un rapport, en lecture ou en création (null = fermée)
 	targetSheet = $state<TargetSheet | null>(null);
@@ -613,7 +645,7 @@ class AppState {
 
 	openLocationEditor(location: Partial<Location> = {}, onSaved?: (location: Location) => void) {
 		this.locationEditor = {
-			form: { label: '', lat: NaN, lon: NaN, elevationM: null, bortle: null, notes: '', ...location },
+			form: { label: '', lat: NaN, lon: NaN, elevationM: null, bortle: null, notes: '', instrumentHeight: 1, minAltitude: null, horizon: null, ...location },
 			onSaved
 		};
 	}
@@ -636,6 +668,21 @@ class AppState {
 			this.locationEditor = null;
 		} catch (err) {
 			await showApiError('Enregistrement du lieu impossible', err);
+		}
+	}
+
+	// Horizon calculé depuis le LiDAR HD de l'IGN (quelques secondes ; France uniquement)
+	async lidarHorizon(lat: number, lon: number, instrumentHeight: number): Promise<Horizon | null> {
+		try {
+			const res = await apiFetch('/geo/lidar-horizon', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ lat, lon, instrumentHeight })
+			});
+			return await res.json();
+		} catch (err) {
+			await showApiError('Calcul de l’horizon impossible', err);
+			return null;
 		}
 	}
 
