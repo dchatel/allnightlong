@@ -14,6 +14,7 @@
 		fill = false,
 		frameClass = 'h-52',
 		subtitle = '',
+		showPath = true,
 		viewOverlayText = '',
 		viewOverlayIcon = '🌌',
 		onViewClick = undefined
@@ -27,6 +28,7 @@
 		fill?: boolean;
 		frameClass?: string;
 		subtitle?: string;
+		showPath?: boolean;
 		viewOverlayText?: string;
 		viewOverlayIcon?: string;
 		onViewClick?: () => void;
@@ -62,6 +64,7 @@
 	{title}
 	path={imageUrl}
 	{subtitle}
+	{showPath}
 	{missing}
 	{fill}
 	{frameClass}

@@ -45,10 +45,6 @@
 		return [where, IMAGE_KINDS[image.kind] ?? image.kind, image.caption].filter(Boolean).join(' · ');
 	}
 
-	function fileName(path: string) {
-		return path.split(/[\\/]/).pop() ?? path;
-	}
-
 	// --- Visionneuse ---
 	let viewerIndex = $state<number | null>(null);
 	let viewed = $derived(viewerIndex == null ? null : visible[viewerIndex] ?? null);
@@ -170,7 +166,6 @@
 				<ImagePicker
 					title={imageTitle(selected)}
 					imageUrl={selected.path}
-					subtitle={fileName(selected.path)}
 					missing={selected.missing}
 					isEditing
 					clearable={false}
@@ -241,6 +236,7 @@
 					title={imageTitle(image)}
 					path={image.path}
 					subtitle={subtitle(image)}
+					showPath
 					missing={image.missing}
 					highlight={image.isFavorite}
 					onclick={() => (viewerIndex = i)}
