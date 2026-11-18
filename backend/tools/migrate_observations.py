@@ -30,6 +30,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from fits import fits_header, light_frames, name_tokens, normalize_name, parse_fits_date  # noqa: E402
 
 MIGRATION_KEY = "lot6_migration"
 # Une heure de début saisie à la main peut s'écarter de celle des FITS (heure locale, faute de frappe)
@@ -39,36 +41,12 @@ LOCATION_RADIUS_M = 150
 
 
 # ---------------------------------------------------------------- FITS
-def fits_header(path: Path) -> dict:
-    """Mots-clés de l'en-tête FITS (blocs de 2880 octets, cartes de 80 caractères)."""
-    cards = {}
-    with open(path, "rb") as f:
-        while True:
-            block = f.read(2880)
-            if len(block) < 2880:
-                return cards
-            for i in range(0, 2880, 80):
-                card = block[i:i + 80].decode("ascii", "replace")
-                key = card[:8].strip()
-                if key == "END":
-                    return cards
-                if card[8:10] == "= ":
-                    cards[key] = card[10:].split(" /")[0].strip().strip("'").strip()
-
-
-def parse_fits_date(value: str) -> datetime:
-    return datetime.strptime(value[:19], "%Y-%m-%dT%H:%M:%S")
-
-
 def read_captures(root: Path) -> list:
     """Une capture = un dossier « <cible>_sub » de poses « Light_… » dans un dossier de nuit."""
     captures = []
     for night_dir in sorted(p for p in root.iterdir() if p.is_dir()):
         for sub_dir in sorted(p for p in night_dir.iterdir() if p.is_dir() and p.name.endswith("_sub")):
-            lights = sorted(
-                (p for p in sub_dir.rglob("Light*") if p.suffix.lower() in (".fit", ".fits")),
-                key=lambda p: p.stem.rsplit("_", 1)[-1],
-            )
+            lights = light_frames(sub_dir)
             if not lights:
                 continue
             first, last = fits_header(lights[0]), fits_header(lights[-1])
@@ -93,27 +71,11 @@ def read_captures(root: Path) -> list:
 
 
 # ---------------------------------------------------------------- Correspondances
-def normalize(name: str) -> str:
-    """« M42 », « M 42 », « m_42 » → « m42 » ; idem pour NGC, IC, Sh2…"""
-    return re.sub(r"[\s_\-.]", "", name.lower())
-
-
-def name_tokens(text: str) -> set:
-    tokens = set()
-    for m in re.finditer(r"\b(m|ngc|ic|sh2|c|hip)[\s_]*-?\s*(\d+[a-z]?)", text.lower()):
-        tokens.add(m.group(1) + m.group(2))
-    # « NGC 4631,4627 » ou « NGC 6992,6995 » : numéros qui suivent un catalogue déjà cité
-    for m in re.finditer(r"\b(ngc|ic)[\s_]*(\d+(?:\s*[,/-]\s*\d+)+)", text.lower()):
-        for number in re.findall(r"\d+", m.group(2)):
-            tokens.add(m.group(1) + number)
-    return tokens
-
-
 def match_capture(obs: dict, captures: list):
     """Meilleure capture pour une observation, avec la raison du choix (ou None)."""
     date = datetime.strptime(obs["start"][:10], "%Y-%m-%d")
     has_time = len(obs["start"]) > 10
-    target_keys = {normalize(n) for n in obs["target_names"]}
+    target_keys = {normalize_name(n) for n in obs["target_names"]}
     best = None
     for c in captures:
         day_gap = (c["start"].date() - date.date()).days
@@ -176,7 +138,6 @@ def main():
     db_path = work / "allnightlong.db"
     shutil.copy2(args.source, db_path)
     os.environ["APPDATA"] = str(args.out)
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     import main as app  # noqa: E402  (exécute init_db sur la copie)
 
     conn = app.connect()
@@ -252,7 +213,7 @@ def main():
     report.line("|---|---|---|---|---|")
     for key, members in sorted(groups.items(), key=lambda kv: by_key[kv[0]]["start"]):
         capture = by_key[key]
-        members.sort(key=lambda o: (0 if (set(map(normalize, o["target_names"])) & name_tokens(capture["names"])) else 1, o["id"]))
+        members.sort(key=lambda o: (0 if (set(map(normalize_name, o["target_names"])) & name_tokens(capture["names"])) else 1, o["id"]))
         primary, others = members[0], members[1:]
         start, end = f"{capture['start']:%Y-%m-%d %H:%M}", f"{capture['end']:%Y-%m-%d %H:%M}"
         remarks = []

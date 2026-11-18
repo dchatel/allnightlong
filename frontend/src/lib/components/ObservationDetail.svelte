@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { appState, parseLegacyCoords, emptyObservationTarget, formatDate, formatDateTime, type ObservationTarget } from '$lib/state.svelte';
 	import { fade, slide } from 'svelte/transition';
+	import { open } from '@tauri-apps/plugin-dialog';
 	import ImageGallery from '$lib/components/ImageGallery.svelte';
 	import WeatherReadings from '$lib/components/WeatherReadings.svelte';
 	import { makeObserver, targetAltitude, targetCoords, utcDate } from '$lib/astro';
@@ -123,6 +124,90 @@
 		return (Number(row.imgGood) || 0) + (Number(row.imgPass) || 0) + (Number(row.imgBad) || 0);
 	}
 
+	// --- PRÉ-REMPLISSAGE DEPUIS UN FITS ---
+	// Dossier du dernier FITS choisi : la fenêtre de choix s'y rouvre (préférence de ce poste seulement)
+	const FITS_DIR_KEY = 'allnightlong.lastFitsDir';
+	let fitsMessage = $state<{ filled: string[]; warnings: string[] } | null>(null);
+	$effect(() => {
+		appState.activeObservationId;
+		fitsMessage = null;
+	});
+
+	// Noms de filtre du Seestar → ceux que l'utilisateur emploie dans ses rapports
+	const FILTER_NAMES: Record<string, string> = { LP: 'LP dual bande', IRCUT: 'IRCUT' };
+
+	async function fillFromFits() {
+		let lastDir: string | undefined;
+		try { lastDir = localStorage.getItem(FITS_DIR_KEY) ?? undefined; } catch { /* stockage indisponible */ }
+		const picked = await open({
+			multiple: false,
+			title: 'Choisir le FITS empilé (Stacked_…) de cette observation',
+			defaultPath: lastDir,
+			filters: [{ name: 'FITS du Seestar', extensions: ['fit', 'fits', 'fts'] }]
+		});
+		if (typeof picked !== 'string') return;
+		try { localStorage.setItem(FITS_DIR_KEY, picked.replace(/[\\/][^\\/]*$/, '')); } catch { /* idem */ }
+
+		const fits = await appState.readFits(picked);
+		if (!fits) return;
+		const form = appState.observationForm;
+		const filled: string[] = [];
+		const warnings: string[] = [];
+
+		form.start = fits.start;
+		form.end = fits.end;
+		filled.push(`début ${formatDateTime(fits.start)}, fin ${formatDateTime(fits.end)} (TU)`);
+		if (!fits.startExact) warnings.push('Début estimé à partir du nombre de poses : le dossier « _sub » des poses n’a pas été trouvé.');
+		if (fits.filter) {
+			form.filter = FILTER_NAMES[fits.filter] ?? fits.filter;
+			filled.push(`filtre ${form.filter}`);
+		}
+		if (fits.sensorTemp != null) {
+			form.sensorTemp = fits.sensorTemp.toFixed(1);
+			filled.push(`capteur ${form.sensorTemp} °C`);
+		}
+		if (fits.exposure) {
+			form.subExposure = String(Math.round(fits.exposure * 10) / 10);
+			filled.push(`pose ${form.subExposure} s`);
+		}
+		if (fits.frames) {
+			form.imgTotal = fits.frames;
+			filled.push(`${fits.frames} poses`);
+		}
+		if (fits.instrument && !String(form.sensor ?? '').toLowerCase().includes('seestar')) {
+			form.sensor = fits.instrument;
+		}
+		if (fits.locationId) {
+			form.locationId = fits.locationId;
+			filled.push(`lieu ${appState.locationById(fits.locationId)?.label}`);
+		} else {
+			warnings.push('Aucun lieu enregistré près des coordonnées du Seestar : choisissez-le dans la liste.');
+		}
+
+		// Cibles : elles complètent le tableau, une ligne vide est réutilisée
+		const present = new Set(form.targets.map((r: ObservationTarget) => r.targetId));
+		for (const id of fits.targetIds.filter(id => !present.has(id))) {
+			const empty = form.targets.find((r: ObservationTarget) => !r.targetId);
+			if (empty) empty.targetId = id;
+			else form.targets = [...form.targets, emptyObservationTarget(id)];
+		}
+		if (fits.targetIds.length) {
+			filled.push(`cible${fits.targetIds.length > 1 ? 's' : ''} ${fits.targetIds.map(id => appState.targetName(id)).join(', ')}`);
+		} else {
+			warnings.push(`Cible « ${fits.object || '?'} » introuvable dans vos cibles : choisissez-la ou créez-la dans le tableau.`);
+		}
+
+		// Aperçu enregistré par le Seestar, ajouté comme image brute du champ entier
+		if (fits.preview && !form.images.some((i: any) => i.path.toLowerCase() === fits.preview.toLowerCase())) {
+			form.images = [...form.images, {
+				path: fits.preview, kind: 'brute', software: 'Seestar', palette: '', caption: 'Empilement du Seestar',
+				isFavorite: form.images.length === 0, targetIds: []
+			}];
+			filled.push('aperçu du Seestar dans les images');
+		}
+		fitsMessage = { filled, warnings };
+	}
+
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.key === 'Escape' && appState.isObservationModalOpen) {
 			appState.closeObservation();
@@ -165,6 +250,7 @@
 				</div>
 				<div class="flex items-center space-x-2 shrink-0">
 					{#if appState.isEditingObservation}
+						<button onclick={fillFromFits} class="btn-secondary text-xs" title="Remplir le rapport à partir du FITS empilé du Seestar">Depuis un FITS…</button>
 						<button onclick={() => appState.saveObservation()} class="btn-primary text-xs">Enregistrer</button>
 						<button onclick={() => appState.cancelEditObservation()} class="btn-secondary text-xs">Annuler</button>
 						<button onclick={() => appState.deleteObservation()} class="btn-danger text-xs">Supprimer</button>
@@ -182,6 +268,20 @@
 
 			<!-- Contenu -->
 			<div class="flex-1 min-h-0 overflow-y-auto p-6 flex flex-col">
+				{#if appState.isEditingObservation && fitsMessage}
+					<!-- Ce que le FITS a rempli, et ce qui reste à faire -->
+					<div class="mb-4 rounded-lg border border-indigo-500/50 bg-indigo-500/10 px-4 py-2.5 text-xs flex items-start gap-3">
+						<div class="flex-1">
+							<span class="font-bold text-white">Rempli depuis le FITS :</span>
+							<span class="text-surface-200">{fitsMessage.filled.join(' · ')}.</span>
+							{#each fitsMessage.warnings as warning (warning)}
+								<span class="block text-yellow-500 mt-1">⚠ {warning}</span>
+							{/each}
+							<span class="block text-surface-400 mt-1">Vérifiez, puis enregistrez. Les poses retenues (bon, pass, bad) restent à saisir.</span>
+						</div>
+						<button type="button" onclick={() => (fitsMessage = null)} class="text-surface-400 hover:text-white">✕</button>
+					</div>
+				{/if}
 				<div class="grid grid-cols-1 xl:grid-cols-12 gap-8 flex-1">
 
 					<div class="xl:col-span-8 flex flex-col gap-6">
