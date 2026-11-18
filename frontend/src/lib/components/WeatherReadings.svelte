@@ -96,6 +96,10 @@
 					{/each}
 				</div>
 			</div>
+		{:else if events?.sunset}
+			<p class="text-right text-[11px] text-surface-400 mb-2" title="Renseignez les heures de début et de fin pour afficher le créneau">
+				Pas d'heure de début : nuit entière
+			</p>
 		{/if}
 
 		{#if observer && bounds && targets.length}
