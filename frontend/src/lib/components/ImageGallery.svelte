@@ -4,6 +4,7 @@
 	import { fade } from 'svelte/transition';
 	import ImageFrame from '$lib/components/ImageFrame.svelte';
 	import ImagePicker from '$lib/components/ImagePicker.svelte';
+	import ImageCompare from '$lib/components/ImageCompare.svelte';
 
 	// Images d'une observation, dans la colonne de droite du rapport.
 	// filterTargetId : cible choisie (bouton ou ligne du tableau des cibles), null = toutes.
@@ -43,6 +44,13 @@
 			? image.targetIds.map(id => appState.targetName(id)).join(' + ')
 			: 'Champ entier';
 		return [where, IMAGE_KINDS[image.kind] ?? image.kind, image.caption].filter(Boolean).join(' · ');
+	}
+
+	// --- Comparaison de deux images (parmi celles du filtre) ---
+	let compare = $state<{ left: number; right: number } | null>(null);
+	function openCompare(left: number) {
+		viewerIndex = null;
+		compare = { left, right: left + 1 < visible.length ? left + 1 : 0 };
 	}
 
 	// --- Visionneuse ---
@@ -215,6 +223,11 @@
 {:else}
 	<!-- ================= LECTURE ================= -->
 	<div class="flex flex-col gap-3 min-h-0">
+		{#if visible.length > 1}
+			<div class="flex justify-end">
+				<button type="button" onclick={() => openCompare(0)} class="text-[11px] font-bold text-indigo-400 hover:text-indigo-300">⇆ Comparer deux images</button>
+			</div>
+		{/if}
 		{#if showFilters}
 			<div class="flex flex-wrap gap-1.5">
 				<button type="button" onclick={() => (filterTargetId = null)} class="filter-btn" class:filter-on={filterTargetId == null}>Toutes ({images.length})</button>
@@ -260,7 +273,12 @@
 				<span class="block text-sm font-bold">{imageTitle(viewed)}</span>
 				<span class="block text-xs text-surface-400 truncate">{subtitle(viewed)}</span>
 			</div>
-			<span class="text-xs text-surface-400 shrink-0">{(viewerIndex ?? 0) + 1} / {visible.length} · ← → pour naviguer · Échap pour fermer</span>
+			<div class="flex items-center gap-4 shrink-0">
+				<span class="text-xs text-surface-400">{(viewerIndex ?? 0) + 1} / {visible.length} · ← → pour naviguer · Échap pour fermer</span>
+				{#if visible.length > 1}
+					<button type="button" onclick={(e) => { e.stopPropagation(); openCompare(viewerIndex ?? 0); }} class="btn-secondary text-xs">⇆ Comparer…</button>
+				{/if}
+			</div>
 		</div>
 		<div class="flex-1 min-h-0 flex items-center gap-4">
 			<button type="button" onclick={(e) => { e.stopPropagation(); step(-1); }} class="text-4xl text-white/60 hover:text-white px-2">‹</button>
@@ -275,6 +293,10 @@
 			<button type="button" onclick={(e) => { e.stopPropagation(); step(1); }} class="text-4xl text-white/60 hover:text-white px-2">›</button>
 		</div>
 	</div>
+{/if}
+
+{#if compare}
+	<ImageCompare images={visible} bind:left={compare.left} bind:right={compare.right} {subtitle} onclose={() => (compare = null)} />
 {/if}
 
 <style>
