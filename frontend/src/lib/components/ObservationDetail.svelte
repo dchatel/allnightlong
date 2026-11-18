@@ -188,7 +188,7 @@
 													{#each appState.locations as location (location.id)}
 														<option value={location.id}>{location.label}</option>
 													{/each}
-													<option value={NEW_LOCATION}>+ Nouveau lieu…</option>
+													<option value={NEW_LOCATION} class="create-option">+ Nouveau lieu…</option>
 												</select>
 												{#if selectedLocation}
 													<button
@@ -316,7 +316,7 @@
 												{#each choices(i) as choice (choice.id)}
 													<option value={choice.id}>{choice.name}{choice.usualName ? ` (${choice.usualName})` : ''}</option>
 												{/each}
-												<option value={NEW_TARGET}>+ Nouvelle cible…</option>
+												<option value={NEW_TARGET} class="create-option">+ Nouvelle cible…</option>
 											</select>
 											{#if target}
 												<button type="button" title="Voir la fiche de la cible" onclick={() => appState.openTargetSheet(target.id)} class="btn-secondary px-2 flex items-center">
@@ -402,7 +402,7 @@
 						</div>
 
 						<!-- CONDITIONS DE LA NUIT (session) -->
-						<WeatherReadings sessionId={obs.sessionId} />
+						<WeatherReadings sessionId={obs.sessionId} nightDate={obs.nightDate} windowStart={obs.start.length > 10 ? obs.start : ''} windowEnd={obs.end.length > 10 ? obs.end : ''} />
 					</div>
 
 					<!-- Images -->
@@ -424,6 +424,11 @@
 
 <style>
 	/* Largeur commune du début et de la fin : une date + heure a toujours la même longueur */
+	/* Entrée « + Nouveau… » des listes : en bleu, pour la distinguer des choix */
+	.create-option {
+		color: #818cf8;
+		font-weight: 700;
+	}
 	.session-date {
 		width: 11.5rem;
 		flex-shrink: 0;
