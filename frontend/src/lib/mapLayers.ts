@@ -26,6 +26,8 @@ export function lidarOverlay(L: typeof Leaflet) {
 		layers: 'IGNF_LIDAR-HD_MNS_ELEVATION.ELEVATIONGRIDCOVERAGE.SHADOW',
 		format: 'image/png',
 		transparent: true,
+		// La Géoplateforme refuse la version 1.1.1 que Leaflet utilise par défaut
+		version: '1.3.0',
 		opacity: 0.55,
 		maxZoom: 21,
 		attribution: IGN_ATTRIBUTION
