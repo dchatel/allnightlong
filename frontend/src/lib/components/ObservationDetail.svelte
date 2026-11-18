@@ -3,6 +3,7 @@
 	import { fade, slide } from 'svelte/transition';
 	import ImageGallery from '$lib/components/ImageGallery.svelte';
 	import WeatherReadings from '$lib/components/WeatherReadings.svelte';
+	import { makeObserver, targetAltitude, targetCoords, utcDate } from '$lib/astro';
 
 	let obs = $derived(appState.activeObservation);
 
@@ -88,6 +89,23 @@
 	}
 
 	// Rappel de la cible sous son nom : nom usuel, constellation, type
+	// Hauteur calculée de chaque cible pendant le créneau : au milieu et au plus haut
+	let observer = $derived.by(() => {
+		const location = appState.locationById(fieldValue('locationId'));
+		const point = location ?? parseLegacyCoords(fieldValue('legacyLocation'));
+		return point ? makeObserver(point.lat, point.lon, location?.elevationM) : null;
+	});
+	function computedAltitude(target: any) {
+		const start = fieldValue('start'), end = fieldValue('end');
+		const coords = targetCoords(target);
+		if (!observer || !coords || !start || start.length <= 10 || !end || end.length <= 10) return null;
+		const t0 = utcDate(start).getTime(), t1 = utcDate(end).getTime();
+		if (!(t1 > t0)) return null;
+		let max = -90;
+		for (let t = t0; t <= t1; t += 10 * 60_000) max = Math.max(max, targetAltitude(coords, new Date(t), observer));
+		return { middle: Math.round(targetAltitude(coords, new Date((t0 + t1) / 2), observer)), max: Math.round(max) };
+	}
+
 	function targetSummary(target: any) {
 		return [target.usualName, target.constellation, target.type].filter(Boolean).join(' · ');
 	}
@@ -325,7 +343,18 @@
 											{/if}
 											</div>
 										</div>
-										<input type="text" class="form-input" bind:value={row.altitude} />
+										{@const calc = computedAltitude(target)}
+										<div class="flex gap-1 min-w-0">
+											<input type="text" class="form-input min-w-0" bind:value={row.altitude} placeholder={calc ? `calc. ${calc.middle}` : ''} />
+											{#if calc}
+												<button
+													type="button"
+													title="Reprendre la hauteur calculée au milieu du créneau ({calc.middle}°, maximum {calc.max}°)"
+													onclick={() => (row.altitude = String(calc.middle))}
+													class="btn-secondary text-[10px] px-1.5"
+												>auto</button>
+											{/if}
+										</div>
 										<input type="number" min="0" class="form-input px-1" bind:value={row.imgGood} />
 										<input type="number" min="0" class="form-input px-1" bind:value={row.imgPass} />
 										<input type="number" min="0" class="form-input px-1" bind:value={row.imgBad} />
@@ -356,7 +385,13 @@
 												<span class="text-sm text-surface-500">Cible inconnue</span>
 											{/if}
 										</div>
-										<span class="text-sm text-white">{row.altitude || '—'}</span>
+										{@const calc = computedAltitude(target)}
+										<div>
+											<span class="text-sm text-white">{row.altitude || '—'}</span>
+											{#if calc}
+												<span class="block text-[10px] text-surface-500" title="Calculée : au milieu du créneau · au plus haut">calc. {calc.middle}° · max {calc.max}°</span>
+											{/if}
+										</div>
 										<div class="col-span-3">
 											<span class="text-sm">
 												<span class="text-green-400">{row.imgGood}</span> /
@@ -402,7 +437,7 @@
 						</div>
 
 						<!-- CONDITIONS DE LA NUIT (session) -->
-						<WeatherReadings sessionId={obs.sessionId} nightDate={obs.nightDate} windowStart={obs.start.length > 10 ? obs.start : ''} windowEnd={obs.end.length > 10 ? obs.end : ''} />
+						<WeatherReadings {obs} />
 					</div>
 
 					<!-- Images -->

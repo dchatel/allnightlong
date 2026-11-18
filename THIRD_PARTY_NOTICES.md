@@ -26,6 +26,14 @@ d'AllNightLong : https://github.com/dchatel/allnightlong
 - Code source : https://github.com/Leaflet/Leaflet
 - Licence : BSD 2-Clause (voir `licenses/Leaflet-BSD-2-Clause.txt`)
 
+## Astronomy Engine
+
+- Rôle : calcul local de la hauteur des cibles, du Soleil et de la Lune
+- Version : 2.1.19 (paquet npm `astronomy-engine`)
+- Auteur : Don Cross
+- Code source : https://github.com/cosinekitty/astronomy
+- Licence : MIT (voir `licenses/astronomy-engine-MIT.txt`)
+
 ## Données cartographiques
 
 Les fonds de carte, les adresses et les recherches de lieux viennent d'OpenStreetMap

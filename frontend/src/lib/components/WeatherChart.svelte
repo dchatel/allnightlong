@@ -3,11 +3,23 @@
 
 	// Météo de la nuit : des graphes encadrés, empilés sur le même axe du temps (TU), un par unité.
 	// Jamais deux échelles dans un même graphe : les courbes qui s'y croisent se comparent vraiment.
+	// rangeStart / rangeEnd : plage horaire commune avec le graphe de hauteur (ms) ; hoverTime : heure
+	// survolée, partagée avec lui pour que les deux lignes verticales se suivent.
 	let {
 		readings,
 		windowStart = '',
-		windowEnd = ''
-	}: { readings: WeatherReading[]; windowStart?: string; windowEnd?: string } = $props();
+		windowEnd = '',
+		rangeStart = null,
+		rangeEnd = null,
+		hoverTime = $bindable(null)
+	}: {
+		readings: WeatherReading[];
+		windowStart?: string;
+		windowEnd?: string;
+		rangeStart?: number | null;
+		rangeEnd?: number | null;
+		hoverTime?: number | null;
+	} = $props();
 
 	type Field = keyof WeatherReading;
 	interface Series { field: Field; label: string; color: string; digits: number; dashed?: boolean }
@@ -46,10 +58,14 @@
 	// Courbes masquées (le jet stream l'est d'abord) et courbe mise en avant au survol de sa puce
 	let hidden = $state<Partial<Record<Field, boolean>>>({ jetStream: true });
 	let focused = $state<Field | null>(null);
-	let hoverIndex = $state<number | null>(null);
 
 	const toMs = (time: string) => new Date(time.replace(' ', 'T') + 'Z').getTime();
-	let points = $derived(readings.map(r => ({ r, t: toMs(r.time) })).sort((a, b) => a.t - b.t));
+	let points = $derived(
+		readings
+			.map(r => ({ r, t: toMs(r.time) }))
+			.filter(p => (rangeStart == null || p.t >= rangeStart) && (rangeEnd == null || p.t <= rangeEnd))
+			.sort((a, b) => a.t - b.t)
+	);
 
 	const hasData = (field: Field) => readings.some(r => r[field] != null);
 	let allSeries = $derived(PANELS.flatMap(p => p.series.map(s => ({ ...s, unit: p.unit }))).filter(s => hasData(s.field)));
@@ -57,8 +73,8 @@
 		PANELS.map(p => ({ ...p, series: p.series.filter(s => hasData(s.field) && !hidden[s.field]) })).filter(p => p.series.length)
 	);
 
-	let t0 = $derived(Math.min(...points.map(p => p.t), windowStart ? toMs(windowStart) : Infinity));
-	let t1 = $derived(Math.max(...points.map(p => p.t), windowEnd ? toMs(windowEnd) : -Infinity));
+	let t0 = $derived(rangeStart ?? Math.min(...points.map(p => p.t), windowStart ? toMs(windowStart) : Infinity));
+	let t1 = $derived(rangeEnd ?? Math.max(...points.map(p => p.t), windowEnd ? toMs(windowEnd) : -Infinity));
 	let plotW = $derived(Math.max(100, width - LEFT - RIGHT));
 	const x = (t: number) => LEFT + (t1 > t0 ? ((t - t0) / (t1 - t0)) * plotW : plotW / 2);
 
@@ -101,13 +117,16 @@
 
 	function onMove(e: MouseEvent) {
 		const rect = (e.currentTarget as SVGElement).getBoundingClientRect();
-		const mx = e.clientX - rect.left;
-		let best = 0;
-		points.forEach((p, i) => { if (Math.abs(x(p.t) - mx) < Math.abs(x(points[best].t) - mx)) best = i; });
-		hoverIndex = points.length ? best : null;
+		const t = t0 + ((e.clientX - rect.left - LEFT) / plotW) * (t1 - t0);
+		hoverTime = t >= t0 && t <= t1 ? t : null;
 	}
 
-	let hovered = $derived(hoverIndex == null ? null : points[hoverIndex] ?? null);
+	// Relevé le plus proche de l'heure survolée (ici ou sur le graphe de hauteur), à 45 min près
+	let hovered = $derived.by(() => {
+		if (hoverTime == null || points.length === 0) return null;
+		const best = points.reduce((a, b) => (Math.abs(b.t - hoverTime!) < Math.abs(a.t - hoverTime!) ? b : a));
+		return Math.abs(best.t - hoverTime) <= 45 * 60_000 ? best : null;
+	});
 	const format = (v: unknown, digits: number) => (v == null ? '—' : (v as number).toFixed(digits));
 	// Une courbe mise en avant : les autres s'estompent
 	const opacity = (field: Field) => (focused && focused !== field ? 0.15 : 1);
@@ -143,7 +162,7 @@
 			role="img"
 			aria-label="Météo de la nuit"
 			onmousemove={onMove}
-			onmouseleave={() => (hoverIndex = null)}
+			onmouseleave={() => (hoverTime = null)}
 			class="block select-none"
 		>
 			{#each shown as panel, i (panel.key)}
@@ -195,8 +214,8 @@
 				<text x={x(t)} y={height - 4} class="axis" text-anchor="middle">{hourLabel(t)}</text>
 			{/each}
 
-			{#if hovered}
-				<line x1={x(hovered.t)} x2={x(hovered.t)} y1={HEADER_H} y2={height - AXIS_H} class="crosshair" />
+			{#if hoverTime != null}
+				<line x1={x(hoverTime)} x2={x(hoverTime)} y1={HEADER_H} y2={height - AXIS_H} class="crosshair" />
 			{/if}
 		</svg>
 
