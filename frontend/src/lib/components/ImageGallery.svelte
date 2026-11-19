@@ -247,7 +247,7 @@
 						{#each [null, ...targetIds] as id (id ?? 'champ')}
 							{@const on = id == null ? shownTargets(selected).length === 0 : shownTargets(selected).includes(id)}
 							{@const name = id == null ? 'Champ entier' : appState.targetName(id)}
-							<span class="chip" class:chip-on={on}>
+							<span class="chip" class:chip-on={on} class:chip-fav={on && isStarred(selected, id)}>
 								<button type="button" onclick={() => toggleChip(selected, id)} class="chip-name">{name}</button>
 								{#if on}
 									<button
@@ -385,6 +385,13 @@
 	.chip-on .chip-name {
 		padding-right: 2px;
 	}
+	/* Favorite : toute la chip passe en clair, texte sombre. La différence se lit à la luminosité,
+	   pas seulement à la teinte (une étoile jaune ou blanche sur du bleu se confondent pour un daltonien). */
+	.chip-fav {
+		background: #fbbf24;
+		border-color: #fbbf24;
+		color: #1c1917;
+	}
 	.chip-star {
 		align-self: stretch;
 		display: flex;
@@ -392,11 +399,15 @@
 		padding: 0 8px 2px 4px;
 		font-size: 12px;
 		line-height: 1;
-		color: rgb(255 255 255 / 0.7);
+		/* Pas favorite : étoile presque effacée, nette au survol */
+		color: rgb(255 255 255 / 0.35);
 	}
-	.chip-star:hover,
-	.chip-star-on {
-		color: #fbbf24;
+	.chip-star:hover {
+		color: white;
+	}
+	.chip-star-on,
+	.chip-star-on:hover {
+		color: #1c1917;
 	}
 	.filter-on {
 		background: #6366f1;
