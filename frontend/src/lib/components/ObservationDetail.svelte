@@ -121,6 +121,16 @@
 		{ key: 'imgBad', label: 'Bad', color: 'text-red-500', bar: 'bg-red-500' }
 	];
 	let poseSum = $derived(POSE_FIELDS.reduce((sum, f) => sum + (Number(fieldValue(f.key)) || 0), 0));
+	// Parts de l'anneau, en % du tour
+	let poseSlices = $derived.by(() => {
+		let offset = 0;
+		return POSE_FIELDS.map(f => {
+			const dash = poseSum ? ((Number(fieldValue(f.key)) || 0) / poseSum) * 100 : 0;
+			const slice = { key: f.key, stroke: f.bar.replace('bg-', 'stroke-'), dash, offset };
+			offset += dash;
+			return slice;
+		});
+	});
 	// Temps de pose retenu
 	let keptDuration = $derived(((Number(fieldValue('imgGood')) || 0) * (Number(fieldValue('subExposure')) || 0)) / 60);
 
@@ -290,7 +300,7 @@
 				<div class="grid grid-cols-1 xl:grid-cols-12 gap-8 flex-1">
 
 					<div class="xl:col-span-8 flex flex-col gap-6">
-						<div class="grid grid-cols-1 md:grid-cols-2 gap-6 shrink-0">
+						<div class="grid grid-cols-1 md:grid-cols-[minmax(25.5rem,1.3fr)_minmax(0,0.9fr)_minmax(0,1.1fr)] gap-4 shrink-0">
 
 							<!-- SESSION -->
 							<div class="space-y-4 bg-[#1e1e21] p-4 rounded-lg border border-[#333]">
@@ -371,7 +381,7 @@
 							<!-- MATÉRIEL & POSE -->
 							<div class="bg-[#1e1e21] p-4 rounded-lg border border-[#333]">
 								<span class="text-[10px] uppercase font-bold text-surface-400 block border-b border-[#333] pb-1.5 mb-4">2. Matériel</span>
-								<div class="grid grid-cols-2 gap-x-3 gap-y-4">
+								<div class="grid grid-cols-1 gap-y-3">
 									{#each [
 										{ key: 'instrument', label: 'Instrument (facultatif)' },
 										{ key: 'sensor', label: 'Capteur' },
@@ -389,65 +399,78 @@
 									{/each}
 								</div>
 							</div>
+
+							<!-- POSES : tout l'empilement est trié une fois pour le champ, commun à ses cibles -->
+							<div class="bg-[#1e1e21] p-4 rounded-lg border border-[#333]">
+								<span class="text-[10px] uppercase font-bold text-surface-400 block border-b border-[#333] pb-1.5 mb-4">3. Poses</span>
+								<div class="grid grid-cols-2 gap-x-3 gap-y-4">
+									<div>
+										<label for="obs-imgTotal" class="block text-[10px] text-surface-400 mb-1">Total des poses</label>
+										{#if appState.isEditingObservation}
+											<input id="obs-imgTotal" type="number" min="0" class="form-input" value={fieldValue('imgTotal')} oninput={(e) => setField('imgTotal')(Number(e.currentTarget.value))} />
+										{:else}
+											<span id="obs-imgTotal" class="block text-sm text-white">{fieldValue('imgTotal') ?? 0}</span>
+										{/if}
+									</div>
+									<div>
+										<label for="obs-subExposure" class="block text-[10px] text-surface-400 mb-1">Pose indiv. (s)</label>
+										{#if appState.isEditingObservation}
+											<input id="obs-subExposure" type="text" class="form-input" value={fieldValue('subExposure')} oninput={(e) => setField('subExposure')(e.currentTarget.value)} />
+										{:else}
+											<span id="obs-subExposure" class="block text-sm text-white">{fieldValue('subExposure') || '—'}</span>
+										{/if}
+									</div>
+								</div>
+								<div class="grid grid-cols-3 gap-2 mt-4">
+									{#each POSE_FIELDS as f (f.key)}
+										<div>
+											<label for="obs-{f.key}" class="block text-[10px] mb-1 {f.color}">{f.label}</label>
+											{#if appState.isEditingObservation}
+												<input id="obs-{f.key}" type="number" min="0" class="form-input px-1 no-spin" value={fieldValue(f.key)} oninput={(e) => setField(f.key)(Number(e.currentTarget.value))} />
+											{:else}
+												<span id="obs-{f.key}" class="block text-sm font-bold {f.color}">{fieldValue(f.key) ?? 0}</span>
+											{/if}
+										</div>
+									{/each}
+								</div>
+								<div class="border-t border-[#333] pt-3 mt-4 flex items-center gap-4">
+									<!-- Anneau : un cercle de rayon 15.9155 mesure 100 de tour, les parts s'y posent en % -->
+									<div class="w-16 h-16 shrink-0 relative" title="Part des poses bonnes">
+										<svg viewBox="0 0 44 44" class="w-full h-full -rotate-90">
+											<circle cx="22" cy="22" r="15.9155" fill="transparent" class="stroke-[#2a2a2e]" stroke-width="7" />
+											{#each poseSlices as slice (slice.key)}
+												<circle cx="22" cy="22" r="15.9155" fill="transparent" class={slice.stroke} stroke-width="7"
+													stroke-dasharray="{slice.dash} 100" stroke-dashoffset={-slice.offset} />
+											{/each}
+										</svg>
+										<span class="absolute inset-0 flex items-center justify-center text-[11px] font-bold {poseSum ? 'text-green-400' : 'text-surface-500'}">
+											{poseSum ? `${Math.round(((Number(fieldValue('imgGood')) || 0) / poseSum) * 100)} %` : '?'}
+										</span>
+									</div>
+									<div class="grid grid-cols-[auto_auto] justify-between items-baseline gap-x-3 gap-y-1 min-w-0 flex-1">
+										<span class="text-[10px] text-surface-400 whitespace-nowrap">Durée totale</span>
+										<span class="text-sm font-black text-white whitespace-nowrap text-right">{totalDuration.toFixed(1)} min</span>
+										<span class="text-[10px] text-surface-400 whitespace-nowrap" title="Poses bonnes × pose individuelle">Durée retenue</span>
+										<span class="text-sm font-black text-green-400 whitespace-nowrap text-right">{keptDuration ? `${keptDuration.toFixed(1)} min` : '—'}</span>
+									</div>
+								</div>
+							</div>
 						</div>
+
+						{#if showConflict}
+							<div class="-mt-2 px-3 py-2 rounded border border-amber-500/40 bg-amber-500/10 text-xs text-amber-200 flex items-start gap-3">
+								<p class="flex-1">
+									Avant la reprise, chaque cible avait ses propres comptes (bon / pass / bad) :
+									{poseConflict.map(c => `${appState.targetName(c.targetId)} ${c.imgGood} / ${c.imgPass} / ${c.imgBad}`).join(' ; ')}.
+									Ceux de la première cible ont été gardés : corrigez-les si besoin.
+								</p>
+								<button type="button" onclick={() => appState.setCheckDismissed(conflictKey, true)} class="btn-secondary text-[10px] shrink-0">C'est réglé</button>
+							</div>
+						{/if}
 
 						<!-- CIBLES DU CHAMP -->
 						<div class="bg-[#1e1e21] p-4 rounded-lg border border-[#333] shrink-0">
-							<div class="flex items-end justify-between gap-4 border-b border-[#333] pb-1.5 mb-2">
-								<span class="text-[10px] uppercase font-bold text-surface-400 whitespace-nowrap">Cibles du champ</span>
-								<!-- Total des poses × pose individuelle = durée totale d'acquisition -->
-								<div class="flex items-center gap-2 text-[10px] text-surface-400 whitespace-nowrap">
-									<label for="obs-imgTotal">Total des poses</label>
-									{#if appState.isEditingObservation}
-										<input id="obs-imgTotal" type="number" min="0" class="form-input py-0.5" style="width: 5rem" value={fieldValue('imgTotal')} oninput={(e) => setField('imgTotal')(Number(e.currentTarget.value))} />
-									{:else}
-										<span id="obs-imgTotal" class="text-sm font-bold text-white">{fieldValue('imgTotal') ?? 0}</span>
-									{/if}
-									<span class="text-sm text-surface-500">×</span>
-									<label for="obs-subExposure">Pose indiv.</label>
-									{#if appState.isEditingObservation}
-										<input id="obs-subExposure" type="text" class="form-input py-0.5" style="width: 3.5rem" value={fieldValue('subExposure')} oninput={(e) => setField('subExposure')(e.currentTarget.value)} />
-									{:else}
-										<span id="obs-subExposure" class="text-sm font-bold text-white">{fieldValue('subExposure') || '—'}</span>
-									{/if}
-									<span>s</span>
-									<span class="text-sm text-surface-500">=</span>
-									<span>Durée totale</span>
-									<span class="text-sm font-black text-white">{totalDuration.toFixed(1)} min</span>
-								</div>
-							</div>
-							<!-- Tri des poses du champ : commun à toutes les cibles -->
-							<div class="flex items-center justify-end gap-3 text-[10px] text-surface-400 whitespace-nowrap mb-3">
-								<span>Poses du champ</span>
-								{#each POSE_FIELDS as f (f.key)}
-									<label for="obs-{f.key}" class={f.color}>{f.label}</label>
-									{#if appState.isEditingObservation}
-										<input id="obs-{f.key}" type="number" min="0" class="form-input py-0.5 px-1" style="width: 4.5rem" value={fieldValue(f.key)} oninput={(e) => setField(f.key)(Number(e.currentTarget.value))} />
-									{:else}
-										<span id="obs-{f.key}" class="text-sm font-bold {f.color}">{fieldValue(f.key) ?? 0}</span>
-									{/if}
-								{/each}
-								{#if !appState.isEditingObservation && poseSum > 0}
-									<div class="flex gap-0.5 h-1.5 w-24 rounded-full overflow-hidden">
-										{#each POSE_FIELDS as f (f.key)}
-											<div class={f.bar} style="flex: {fieldValue(f.key) || 0}"></div>
-										{/each}
-									</div>
-								{/if}
-								<span class="text-sm text-surface-500">·</span>
-								<span title="Poses bonnes × pose individuelle">Durée retenue</span>
-								<span class="text-sm font-black text-white">{keptDuration ? `${keptDuration.toFixed(1)} min` : '—'}</span>
-							</div>
-							{#if showConflict}
-								<div class="mb-3 px-3 py-2 rounded border border-amber-500/40 bg-amber-500/10 text-xs text-amber-200 flex items-start gap-3">
-									<p class="flex-1">
-										Avant la reprise, chaque cible avait ses propres comptes (bon / pass / bad) :
-										{poseConflict.map(c => `${appState.targetName(c.targetId)} ${c.imgGood} / ${c.imgPass} / ${c.imgBad}`).join(' ; ')}.
-										Ceux de la première cible ont été gardés : corrigez-les si besoin.
-									</p>
-									<button type="button" onclick={() => appState.setCheckDismissed(conflictKey, true)} class="btn-secondary text-[10px] shrink-0">C'est réglé</button>
-								</div>
-							{/if}
+							<span class="text-[10px] uppercase font-bold text-surface-400 block border-b border-[#333] pb-1.5 mb-2">Cibles du champ</span>
 							<div class="grid grid-cols-[minmax(0,1.6fr)_minmax(0,0.7fr)_auto] gap-x-2 gap-y-1 items-center">
 								<span class="text-[10px] text-surface-400">Cible</span>
 								<span class="text-[10px] text-surface-400">Hauteur (°)</span>
@@ -577,6 +600,16 @@
 	.create-option {
 		color: #818cf8;
 		font-weight: 700;
+	}
+	/* Bon / pass / bad : sans flèches, le nombre garde toute la largeur du champ */
+	.no-spin {
+		-moz-appearance: textfield;
+		appearance: textfield;
+	}
+	.no-spin::-webkit-inner-spin-button,
+	.no-spin::-webkit-outer-spin-button {
+		-webkit-appearance: none;
+		margin: 0;
 	}
 	.session-date {
 		width: 11.5rem;

@@ -17,6 +17,7 @@
 		empty = { text: 'Aucune image', hint: '' },
 		onclick = undefined,
 		headerRight = undefined,
+		header = undefined,
 		corner = undefined
 	}: {
 		title?: string;
@@ -35,6 +36,8 @@
 		empty?: { text: string; hint?: string; icon?: string };
 		onclick?: () => void;
 		headerRight?: Snippet;
+		// Remplace le titre à gauche de l'en-tête (texte mis en forme)
+		header?: Snippet;
 		// Bouton posé dans l'angle du cadre (retirer l'image)
 		corner?: Snippet;
 	} = $props();
@@ -49,9 +52,9 @@
 </script>
 
 {#snippet content()}
-	{#if title || headerRight}
+	{#if title || header || headerRight}
 		<span class="flex items-center justify-between gap-2 mb-1 shrink-0">
-			<span class="text-xs font-bold text-white truncate">{title}</span>
+			{#if header}{@render header()}{:else}<span class="text-xs font-bold text-white truncate">{title}</span>{/if}
 			{@render headerRight?.()}
 		</span>
 	{/if}

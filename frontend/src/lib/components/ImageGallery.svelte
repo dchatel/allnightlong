@@ -295,14 +295,17 @@
 				<ImageFrame
 					title={imageTitle(image)}
 					path={image.path}
-					subtitle={subtitle(image)}
+					subtitle={image.caption}
 					showPath
 					missing={image.missing}
 					highlight={image === highlighted}
 					onclick={() => (viewerIndex = i)}
 				>
-					{#snippet headerRight()}
-						{#if image === highlighted}<span title="Image favorite (vignette)">⭐</span>{/if}
+					{#snippet header()}
+						<span class="text-xs text-white truncate min-w-0">
+							<span class="font-bold">{#each placesOf(image) as place, n (n)}{n ? ' + ' : ''}{place.favorite ? '⭐ ' : ''}{place.name}{/each} · {IMAGE_KINDS[image.kind] ?? image.kind}</span>
+							{#if image.software || image.palette}<span class="text-surface-400"> · {[image.software, image.palette].filter(Boolean).join(' · ')}</span>{/if}
+						</span>
 					{/snippet}
 				</ImageFrame>
 			{/each}
@@ -383,8 +386,11 @@
 		padding-right: 2px;
 	}
 	.chip-star {
-		padding: 0 8px 0 4px;
-		font-size: 13px;
+		align-self: stretch;
+		display: flex;
+		align-items: center;
+		padding: 0 8px 1px 4px;
+		font-size: 12px;
 		line-height: 1;
 		color: rgb(255 255 255 / 0.7);
 	}
