@@ -20,11 +20,11 @@
 
 	let rows = $derived<ObservationTarget[]>(fieldValue('targets') ?? []);
 
-	// Cible dont la galerie montre les images (null = toutes) ; remise à zéro à chaque rapport
+	// Cible dont la galerie montre les images (null = toutes) : à chaque rapport, la cible d'où on l'a ouvert
 	let filterTargetId = $state<number | null>(null);
 	$effect(() => {
 		appState.activeObservationId;
-		filterTargetId = null;
+		filterTargetId = appState.observationOpenedFromTargetId;
 	});
 
 	function imageCount(targetId: number | null) {
@@ -114,15 +114,20 @@
 	// Temps d'acquisition : toutes les poses prises, retenues ou non
 	let totalDuration = $derived(((Number(fieldValue('imgTotal')) || 0) * (Number(fieldValue('subExposure')) || 0)) / 60);
 
-	// Temps de pose retenu pour cette cible
-	function duration(row: ObservationTarget) {
-		const minutes = ((Number(row.imgGood) || 0) * (Number(fieldValue('subExposure')) || 0)) / 60;
-		return minutes ? `${minutes.toFixed(1)} min` : '—';
-	}
+	// Poses du champ : tout l'empilement est traité de la même façon pour chacune de ses cibles
+	const POSE_FIELDS = [
+		{ key: 'imgGood', label: 'Bon', color: 'text-green-400', bar: 'bg-green-400' },
+		{ key: 'imgPass', label: 'Pass', color: 'text-yellow-500', bar: 'bg-yellow-500' },
+		{ key: 'imgBad', label: 'Bad', color: 'text-red-500', bar: 'bg-red-500' }
+	];
+	let poseSum = $derived(POSE_FIELDS.reduce((sum, f) => sum + (Number(fieldValue(f.key)) || 0), 0));
+	// Temps de pose retenu
+	let keptDuration = $derived(((Number(fieldValue('imgGood')) || 0) * (Number(fieldValue('subExposure')) || 0)) / 60);
 
-	function total(row: ObservationTarget) {
-		return (Number(row.imgGood) || 0) + (Number(row.imgPass) || 0) + (Number(row.imgBad) || 0);
-	}
+	// Reprise de l'ancien format : les cibles avaient des comptes différents (signalé tant que ce n'est pas réglé)
+	let poseConflict = $derived<any[]>(obs?.poseConflict ?? []);
+	let conflictKey = $derived(`poses-merge:${obs?.id}`);
+	let showConflict = $derived(poseConflict.length > 0 && !appState.dismissedChecks.includes(conflictKey));
 
 	// --- PRÉ-REMPLISSAGE DEPUIS UN FITS ---
 	// Dossier du dernier FITS choisi : la fenêtre de choix s'y rouvre (préférence de ce poste seulement)
@@ -201,7 +206,7 @@
 		if (fits.preview && !form.images.some((i: any) => i.path.toLowerCase() === fits.preview.toLowerCase())) {
 			form.images = [...form.images, {
 				path: fits.preview, kind: 'brute', software: 'Seestar', palette: '', caption: 'Empilement du Seestar',
-				isFavorite: form.images.length === 0, targetIds: []
+				isFavorite: !form.images.some((i: any) => i.isFavorite), targetIds: [], favoriteTargetIds: []
 			}];
 			filled.push('aperçu du Seestar dans les images');
 		}
@@ -411,13 +416,41 @@
 									<span class="text-sm font-black text-white">{totalDuration.toFixed(1)} min</span>
 								</div>
 							</div>
-							<div class="grid grid-cols-[minmax(0,1.6fr)_minmax(0,0.7fr)_repeat(3,minmax(0,0.55fr))_minmax(0,0.6fr)_auto] gap-x-2 gap-y-1 items-center">
+							<!-- Tri des poses du champ : commun à toutes les cibles -->
+							<div class="flex items-center justify-end gap-3 text-[10px] text-surface-400 whitespace-nowrap mb-3">
+								<span>Poses du champ</span>
+								{#each POSE_FIELDS as f (f.key)}
+									<label for="obs-{f.key}" class={f.color}>{f.label}</label>
+									{#if appState.isEditingObservation}
+										<input id="obs-{f.key}" type="number" min="0" class="form-input py-0.5 px-1" style="width: 4.5rem" value={fieldValue(f.key)} oninput={(e) => setField(f.key)(Number(e.currentTarget.value))} />
+									{:else}
+										<span id="obs-{f.key}" class="text-sm font-bold {f.color}">{fieldValue(f.key) ?? 0}</span>
+									{/if}
+								{/each}
+								{#if !appState.isEditingObservation && poseSum > 0}
+									<div class="flex gap-0.5 h-1.5 w-24 rounded-full overflow-hidden">
+										{#each POSE_FIELDS as f (f.key)}
+											<div class={f.bar} style="flex: {fieldValue(f.key) || 0}"></div>
+										{/each}
+									</div>
+								{/if}
+								<span class="text-sm text-surface-500">·</span>
+								<span title="Poses bonnes × pose individuelle">Durée retenue</span>
+								<span class="text-sm font-black text-white">{keptDuration ? `${keptDuration.toFixed(1)} min` : '—'}</span>
+							</div>
+							{#if showConflict}
+								<div class="mb-3 px-3 py-2 rounded border border-amber-500/40 bg-amber-500/10 text-xs text-amber-200 flex items-start gap-3">
+									<p class="flex-1">
+										Avant la reprise, chaque cible avait ses propres comptes (bon / pass / bad) :
+										{poseConflict.map(c => `${appState.targetName(c.targetId)} ${c.imgGood} / ${c.imgPass} / ${c.imgBad}`).join(' ; ')}.
+										Ceux de la première cible ont été gardés : corrigez-les si besoin.
+									</p>
+									<button type="button" onclick={() => appState.setCheckDismissed(conflictKey, true)} class="btn-secondary text-[10px] shrink-0">C'est réglé</button>
+								</div>
+							{/if}
+							<div class="grid grid-cols-[minmax(0,1.6fr)_minmax(0,0.7fr)_auto] gap-x-2 gap-y-1 items-center">
 								<span class="text-[10px] text-surface-400">Cible</span>
 								<span class="text-[10px] text-surface-400">Hauteur (°)</span>
-								<span class="text-[10px] text-green-400">Bon</span>
-								<span class="text-[10px] text-yellow-500">Pass</span>
-								<span class="text-[10px] text-red-500">Bad</span>
-								<span class="text-[10px] text-surface-400" title="Poses retenues × pose individuelle">Durée retenue</span>
 								<span class="text-[10px] text-surface-400">{appState.isEditingObservation ? '' : 'Images'}</span>
 
 								{#each rows as row, i (i)}
@@ -455,18 +488,14 @@
 												>auto</button>
 											{/if}
 										</div>
-										<input type="number" min="0" class="form-input px-1" bind:value={row.imgGood} />
-										<input type="number" min="0" class="form-input px-1" bind:value={row.imgPass} />
-										<input type="number" min="0" class="form-input px-1" bind:value={row.imgBad} />
-										<span class="text-sm text-surface-300">{duration(row)}</span>
 										<button type="button" title="Retirer cette cible" onclick={() => removeTarget(i)} class="text-red-400 hover:text-red-300 px-1">✕</button>
 										<!-- Rappel de la cible sur sa propre ligne : la ligne des champs reste alignée -->
 										{#if target}
-											<span class="col-span-7 -mt-0.5 text-[10px] text-surface-500 truncate">{targetSummary(target)}</span>
+											<span class="col-span-3 -mt-0.5 text-[10px] text-surface-500 truncate">{targetSummary(target)}</span>
 										{/if}
 										<input
 											type="text"
-											class="form-input col-span-6 mb-2"
+											class="form-input col-span-2 mb-2"
 											placeholder="Note pour cette cible (facultatif)"
 											bind:value={row.notes}
 										/>
@@ -492,21 +521,6 @@
 												<span class="block text-[10px] text-surface-500" title="Calculée : au milieu du créneau · au plus haut">calc. {calc.middle}° · max {calc.max}°</span>
 											{/if}
 										</div>
-										<div class="col-span-3">
-											<span class="text-sm">
-												<span class="text-green-400">{row.imgGood}</span> /
-												<span class="text-yellow-500">{row.imgPass}</span> /
-												<span class="text-red-500">{row.imgBad}</span>
-											</span>
-											{#if total(row) > 0}
-												<div class="flex gap-0.5 mt-1 h-1.5 rounded-full overflow-hidden">
-													<div class="bg-green-400" style="flex: {row.imgGood || 0}"></div>
-													<div class="bg-yellow-500" style="flex: {row.imgPass || 0}"></div>
-													<div class="bg-red-500" style="flex: {row.imgBad || 0}"></div>
-												</div>
-											{/if}
-										</div>
-										<span class="text-sm text-white">{duration(row)}</span>
 										<button
 											type="button"
 											title="Afficher les images de cette cible"
@@ -514,7 +528,7 @@
 											class="text-xs px-2 py-0.5 rounded-full border transition-colors {filterTargetId === row.targetId ? 'bg-indigo-500 border-indigo-500 text-white font-bold' : 'border-[#333] text-surface-300 hover:border-indigo-500'}"
 										>🖼 {imageCount(row.targetId)}</button>
 										{#if row.notes}
-											<p class="col-span-7 text-xs text-surface-300 whitespace-pre-wrap -mt-0.5 mb-1.5">Note : {row.notes}</p>
+											<p class="col-span-3 text-xs text-surface-300 whitespace-pre-wrap -mt-0.5 mb-1.5">Note : {row.notes}</p>
 										{/if}
 									{/if}
 								{/each}

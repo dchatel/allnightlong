@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { appState, IMAGE_KINDS, imageTitle, imageSrc, type ObservationImage, type ObservationTarget } from '$lib/state.svelte';
+	import { appState, IMAGE_KINDS, imageTitle, imageSrc, favoriteImage, type ObservationImage, type ObservationTarget } from '$lib/state.svelte';
 	import { open } from '@tauri-apps/plugin-dialog';
 	import { fade } from 'svelte/transition';
 	import ImageFrame from '$lib/components/ImageFrame.svelte';
@@ -39,12 +39,28 @@
 		return images.filter(i => i.targetIds.length === 0 || i.targetIds.includes(id)).length;
 	}
 
+	// Cibles de l'observation visibles sur l'image ; aucune = champ entier
+	function shownTargets(image: ObservationImage) {
+		return image.targetIds.filter(id => targetIds.includes(id));
+	}
+
+	// Ce que montre l'image, chaque élément marqué s'il en est la favorite
+	function placesOf(image: ObservationImage) {
+		const shown = shownTargets(image);
+		if (!shown.length) return [{ name: 'Champ entier', favorite: image.isFavorite }];
+		return shown.map(id => ({ name: appState.targetName(id), favorite: (image.favoriteTargetIds ?? []).includes(id) }));
+	}
+
 	function subtitle(image: ObservationImage) {
-		const where = image.targetIds.length
-			? image.targetIds.map(id => appState.targetName(id)).join(' + ')
-			: 'Champ entier';
+		const where = placesOf(image).map(p => (p.favorite ? `⭐ ${p.name}` : p.name)).join(' + ');
 		return [where, IMAGE_KINDS[image.kind] ?? image.kind, image.caption].filter(Boolean).join(' · ');
 	}
+
+	// Lecture : l'image qui sert de vignette pour le filtre choisi, si elle a été choisie comme favorite
+	let highlighted = $derived.by(() => {
+		const image = favoriteImage({ images, targets: rows }, filterTargetId);
+		return image && (image.isFavorite || (image.favoriteTargetIds ?? []).length) ? image : null;
+	});
 
 	// --- Comparaison de deux images (parmi celles du filtre) ---
 	let compare = $state<{ left: number; right: number } | null>(null);
@@ -88,9 +104,11 @@
 			software: '',
 			palette: '',
 			caption: '',
-			isFavorite: images.length === 0 && n === 0,
 			// Une seule cible dans l'observation : l'image la montre sûrement
-			targetIds: targetIds.length === 1 ? [...targetIds] : []
+			targetIds: targetIds.length === 1 ? [...targetIds] : [],
+			// La première image devient la favorite de ce qu'elle montre, si rien n'en a encore
+			isFavorite: n === 0 && targetIds.length !== 1 && !images.some(i => i.isFavorite),
+			favoriteTargetIds: n === 0 && targetIds.length === 1 && !images.some(i => (i.favoriteTargetIds ?? []).includes(targetIds[0])) ? [...targetIds] : []
 		}));
 		setImages([...images, ...added]);
 		selectedIndex = images.length;
@@ -102,19 +120,40 @@
 	}
 
 	function remove(index: number) {
-		const wasFavorite = images[index].isFavorite;
 		const rest = images.filter((_, i) => i !== index);
-		if (wasFavorite && rest.length) rest[0].isFavorite = true;
 		setImages(rest);
 		selectedIndex = Math.min(selectedIndex, Math.max(0, rest.length - 1));
 	}
 
-	function makeFavorite(index: number) {
-		images.forEach((image, i) => (image.isFavorite = i === index));
+	// Chips de l'image : « Champ entier » (id null, exclusive) ou une cible (choix multiple).
+	// Tout changement retire à l'image ses favorites : elles sont à redonner à la main.
+	function toggleChip(image: ObservationImage, id: number | null) {
+		const shown = shownTargets(image);
+		if (id == null) {
+			if (!shown.length) return;
+			image.targetIds = [];
+		} else {
+			image.targetIds = shown.includes(id) ? shown.filter(t => t !== id) : [...shown, id];
+		}
+		image.isFavorite = false;
+		image.favoriteTargetIds = [];
 	}
 
-	function toggleTarget(image: ObservationImage, id: number, on: boolean) {
-		image.targetIds = on ? [...image.targetIds, id] : image.targetIds.filter(t => t !== id);
+	// Étoile d'une chip : l'image devient la favorite du champ (id null) ou de cette cible, à la place d'une autre
+	function toggleStar(image: ObservationImage, id: number | null) {
+		if (id == null) {
+			const on = !image.isFavorite;
+			images.forEach(i => (i.isFavorite = false));
+			image.isFavorite = on;
+			return;
+		}
+		const on = !(image.favoriteTargetIds ?? []).includes(id);
+		images.forEach(i => (i.favoriteTargetIds = (i.favoriteTargetIds ?? []).filter(t => t !== id)));
+		if (on) image.favoriteTargetIds = [...image.favoriteTargetIds, id];
+	}
+
+	function isStarred(image: ObservationImage, id: number | null) {
+		return id == null ? image.isFavorite : (image.favoriteTargetIds ?? []).includes(id);
 	}
 </script>
 
@@ -150,18 +189,16 @@
 						{:else}
 							<img src={imageSrc(image.path)} alt="" class="w-12 h-9 shrink-0 rounded object-cover bg-black/40" />
 						{/if}
-						<span class="min-w-0">
+						<span class="min-w-0 flex-1">
 							<span class="block text-xs font-bold text-white truncate">{imageTitle(image)}</span>
-							<span class="block text-[10px] text-surface-400 truncate">{subtitle(image)}</span>
+							{#if image.caption}<span class="block text-[10px] text-surface-400 truncate">{image.caption}</span>{/if}
+						</span>
+						<!-- Ce que montre l'image (⭐ devant ce dont elle est la favorite), puis son type -->
+						<span class="shrink-0 max-w-[55%] text-right text-[10px] text-surface-400 truncate">
+							{#each placesOf(image) as place, n (n)}{n ? ' + ' : ''}{#if place.favorite}<span class="font-bold text-white">⭐ {place.name}</span>{:else}{place.name}{/if}{/each}
+							<span class="text-surface-500"> · {IMAGE_KINDS[image.kind] ?? image.kind}</span>
 						</span>
 					</button>
-					<button
-						type="button"
-						title={image.isFavorite ? 'Image favorite (vignette)' : 'Choisir comme image favorite'}
-						onclick={() => makeFavorite(i)}
-						class="text-base px-1"
-						class:opacity-30={!image.isFavorite}
-					>⭐</button>
 					<button type="button" title="Retirer l'image (le fichier reste sur le disque)" onclick={() => remove(i)} class="text-red-400 hover:text-red-300 px-1">✕</button>
 				</div>
 			{/each}
@@ -202,19 +239,29 @@
 						<input id="img-caption" type="text" class="form-input" bind:value={selected.caption} placeholder="Recadrée, finition Photoshop…" />
 					</div>
 				</div>
-				{#if targetIds.length}
-					<div>
-						<span class="block text-[10px] text-surface-400 mb-1">Cibles visibles (aucune = champ entier)</span>
-						<div class="flex flex-wrap gap-x-4 gap-y-1">
-							{#each targetIds as id (id)}
-								<label class="flex items-center gap-1.5 text-xs text-white">
-									<input type="checkbox" checked={selected.targetIds.includes(id)} onchange={(e) => toggleTarget(selected, id, e.currentTarget.checked)} />
-									{appState.targetName(id)}
-								</label>
-							{/each}
-						</div>
+				<div>
+					<span class="block text-[10px] text-surface-400 mb-1">
+						Ce que montre l'image <span class="text-surface-500">· nom : choisir · ☆ : en faire la favorite</span>
+					</span>
+					<div class="flex flex-wrap gap-1.5">
+						{#each [null, ...targetIds] as id (id ?? 'champ')}
+							{@const on = id == null ? shownTargets(selected).length === 0 : shownTargets(selected).includes(id)}
+							{@const name = id == null ? 'Champ entier' : appState.targetName(id)}
+							<span class="chip" class:chip-on={on}>
+								<button type="button" onclick={() => toggleChip(selected, id)} class="chip-name">{name}</button>
+								{#if on}
+									<button
+										type="button"
+										title={isStarred(selected, id) ? `Favorite de ${name} (cliquer pour la retirer)` : `En faire la favorite de ${name}`}
+										onclick={() => toggleStar(selected, id)}
+										class="chip-star"
+										class:chip-star-on={isStarred(selected, id)}
+									>{isStarred(selected, id) ? '★' : '☆'}</button>
+								{/if}
+							</span>
+						{/each}
 					</div>
-				{/if}
+				</div>
 			</div>
 		{/if}
 		<datalist id="img-software-list">{#each SOFTWARE as s (s)}<option value={s}></option>{/each}</datalist>
@@ -251,11 +298,11 @@
 					subtitle={subtitle(image)}
 					showPath
 					missing={image.missing}
-					highlight={image.isFavorite}
+					highlight={image === highlighted}
 					onclick={() => (viewerIndex = i)}
 				>
 					{#snippet headerRight()}
-						{#if image.isFavorite}<span title="Image favorite (vignette)">⭐</span>{/if}
+						{#if image === highlighted}<span title="Image favorite (vignette)">⭐</span>{/if}
 					{/snippet}
 				</ImageFrame>
 			{/each}
@@ -310,6 +357,40 @@
 	}
 	.filter-btn:hover {
 		border-color: #6366f1;
+	}
+	.chip {
+		display: inline-flex;
+		align-items: center;
+		border-radius: 999px;
+		font-size: 11px;
+		background: #202024;
+		border: 1px solid #333;
+		color: #c4c4cc;
+	}
+	.chip:hover {
+		border-color: #6366f1;
+	}
+	.chip-on {
+		background: #6366f1;
+		border-color: #6366f1;
+		color: white;
+		font-weight: bold;
+	}
+	.chip-name {
+		padding: 2px 10px;
+	}
+	.chip-on .chip-name {
+		padding-right: 2px;
+	}
+	.chip-star {
+		padding: 0 8px 0 4px;
+		font-size: 13px;
+		line-height: 1;
+		color: rgb(255 255 255 / 0.7);
+	}
+	.chip-star:hover,
+	.chip-star-on {
+		color: #fbbf24;
 	}
 	.filter-on {
 		background: #6366f1;
