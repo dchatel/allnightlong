@@ -116,9 +116,9 @@
 
 	// Poses du champ : tout l'empilement est traité de la même façon pour chacune de ses cibles
 	const POSE_FIELDS = [
-		{ key: 'imgGood', label: 'Bon', color: 'text-green-400', bar: 'bg-green-400' },
-		{ key: 'imgPass', label: 'Pass', color: 'text-yellow-500', bar: 'bg-yellow-500' },
-		{ key: 'imgBad', label: 'Bad', color: 'text-red-500', bar: 'bg-red-500' }
+		{ key: 'imgGood', label: 'Bon', color: 'text-green-400', stroke: 'stroke-green-400' },
+		{ key: 'imgPass', label: 'Pass', color: 'text-yellow-500', stroke: 'stroke-yellow-500' },
+		{ key: 'imgBad', label: 'Bad', color: 'text-red-500', stroke: 'stroke-red-500' }
 	];
 	let poseSum = $derived(POSE_FIELDS.reduce((sum, f) => sum + (Number(fieldValue(f.key)) || 0), 0));
 	// Parts de l'anneau, en % du tour
@@ -126,7 +126,7 @@
 		let offset = 0;
 		return POSE_FIELDS.map(f => {
 			const dash = poseSum ? ((Number(fieldValue(f.key)) || 0) / poseSum) * 100 : 0;
-			const slice = { key: f.key, stroke: f.bar.replace('bg-', 'stroke-'), dash, offset };
+			const slice = { key: f.key, stroke: f.stroke, dash, offset };
 			offset += dash;
 			return slice;
 		});
@@ -299,11 +299,12 @@
 				{/if}
 				<div class="grid grid-cols-1 xl:grid-cols-12 gap-8 flex-1">
 
-					<div class="xl:col-span-8 flex flex-col gap-6">
-						<div class="grid grid-cols-1 md:grid-cols-[minmax(25.5rem,1.3fr)_minmax(0,0.9fr)_minmax(0,1.1fr)] gap-4 shrink-0">
+					<div class="xl:col-span-8 flex flex-col gap-6 @container">
+						<!-- Trois cadres côte à côte quand la place le permet ; sinon la session en haut, matériel et poses dessous -->
+						<div class="grid grid-cols-1 @xl:grid-cols-2 @5xl:grid-cols-[minmax(25.5rem,1.3fr)_minmax(0,0.9fr)_minmax(0,1.1fr)] gap-4 shrink-0">
 
 							<!-- SESSION -->
-							<div class="space-y-4 bg-[#1e1e21] p-4 rounded-lg border border-[#333]">
+							<div class="space-y-4 bg-[#1e1e21] p-4 rounded-lg border border-[#333] @xl:col-span-2 @5xl:col-span-1">
 								<span class="text-[10px] uppercase font-bold text-surface-400 block border-b border-[#333] pb-1.5">1. Session</span>
 								<!-- Lieu et Début calés à gauche, Bortle et Fin calés à droite -->
 								<div class="flex justify-between gap-3">
@@ -381,7 +382,7 @@
 							<!-- MATÉRIEL & POSE -->
 							<div class="bg-[#1e1e21] p-4 rounded-lg border border-[#333]">
 								<span class="text-[10px] uppercase font-bold text-surface-400 block border-b border-[#333] pb-1.5 mb-4">2. Matériel</span>
-								<div class="grid grid-cols-1 gap-y-3">
+								<div class="grid grid-cols-2 @5xl:grid-cols-1 gap-x-3 gap-y-3">
 									{#each [
 										{ key: 'instrument', label: 'Instrument (facultatif)' },
 										{ key: 'sensor', label: 'Capteur' },
@@ -435,11 +436,11 @@
 								</div>
 								<div class="border-t border-[#333] pt-3 mt-4 flex items-center gap-4">
 									<!-- Anneau : un cercle de rayon 15.9155 mesure 100 de tour, les parts s'y posent en % -->
-									<div class="w-16 h-16 shrink-0 relative" title="Part des poses bonnes">
+									<div class="w-20 h-20 shrink-0 relative" title="Part des poses bonnes">
 										<svg viewBox="0 0 44 44" class="w-full h-full -rotate-90">
-											<circle cx="22" cy="22" r="15.9155" fill="transparent" class="stroke-[#2a2a2e]" stroke-width="7" />
+											<circle cx="22" cy="22" r="15.9155" fill="transparent" class="stroke-[#2a2a2e]" stroke-width="10" />
 											{#each poseSlices as slice (slice.key)}
-												<circle cx="22" cy="22" r="15.9155" fill="transparent" class={slice.stroke} stroke-width="7"
+												<circle cx="22" cy="22" r="15.9155" fill="transparent" class="ring-slice {slice.stroke}" stroke-width="10"
 													stroke-dasharray="{slice.dash} 100" stroke-dashoffset={-slice.offset} />
 											{/each}
 										</svg>
@@ -447,7 +448,7 @@
 											{poseSum ? `${Math.round(((Number(fieldValue('imgGood')) || 0) / poseSum) * 100)} %` : '?'}
 										</span>
 									</div>
-									<div class="grid grid-cols-[auto_auto] justify-between items-baseline gap-x-3 gap-y-1 min-w-0 flex-1">
+									<div class="grid grid-cols-[auto_auto] justify-start items-baseline gap-x-3 gap-y-1 min-w-0">
 										<span class="text-[10px] text-surface-400 whitespace-nowrap">Durée totale</span>
 										<span class="text-sm font-black text-white whitespace-nowrap text-right">{totalDuration.toFixed(1)} min</span>
 										<span class="text-[10px] text-surface-400 whitespace-nowrap" title="Poses bonnes × pose individuelle">Durée retenue</span>
@@ -610,6 +611,10 @@
 	.no-spin::-webkit-outer-spin-button {
 		-webkit-appearance: none;
 		margin: 0;
+	}
+	/* L'anneau suit la saisie : chaque part glisse vers sa nouvelle taille */
+	.ring-slice {
+		transition: stroke-dasharray 0.6s cubic-bezier(0.4, 0, 0.2, 1), stroke-dashoffset 0.6s cubic-bezier(0.4, 0, 0.2, 1);
 	}
 	.session-date {
 		width: 11.5rem;

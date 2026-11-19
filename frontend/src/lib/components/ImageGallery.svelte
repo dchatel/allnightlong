@@ -389,7 +389,7 @@
 		align-self: stretch;
 		display: flex;
 		align-items: center;
-		padding: 0 8px 1px 4px;
+		padding: 0 8px 2px 4px;
 		font-size: 12px;
 		line-height: 1;
 		color: rgb(255 255 255 / 0.7);
