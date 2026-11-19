@@ -20,11 +20,11 @@
 
 	let rows = $derived<ObservationTarget[]>(fieldValue('targets') ?? []);
 
-	// Cible dont la galerie montre les images (null = toutes) ; remise à zéro à chaque rapport
+	// Cible dont la galerie montre les images (null = toutes) : à chaque rapport, la cible d'où on l'a ouvert
 	let filterTargetId = $state<number | null>(null);
 	$effect(() => {
 		appState.activeObservationId;
-		filterTargetId = null;
+		filterTargetId = appState.observationOpenedFromTargetId;
 	});
 
 	function imageCount(targetId: number | null) {
@@ -114,15 +114,30 @@
 	// Temps d'acquisition : toutes les poses prises, retenues ou non
 	let totalDuration = $derived(((Number(fieldValue('imgTotal')) || 0) * (Number(fieldValue('subExposure')) || 0)) / 60);
 
-	// Temps de pose retenu pour cette cible
-	function duration(row: ObservationTarget) {
-		const minutes = ((Number(row.imgGood) || 0) * (Number(fieldValue('subExposure')) || 0)) / 60;
-		return minutes ? `${minutes.toFixed(1)} min` : '—';
-	}
+	// Poses du champ : tout l'empilement est traité de la même façon pour chacune de ses cibles
+	const POSE_FIELDS = [
+		{ key: 'imgGood', label: 'Bon', color: 'text-green-400', stroke: 'stroke-green-400' },
+		{ key: 'imgPass', label: 'Pass', color: 'text-yellow-500', stroke: 'stroke-yellow-500' },
+		{ key: 'imgBad', label: 'Bad', color: 'text-red-500', stroke: 'stroke-red-500' }
+	];
+	let poseSum = $derived(POSE_FIELDS.reduce((sum, f) => sum + (Number(fieldValue(f.key)) || 0), 0));
+	// Parts de l'anneau, en % du tour
+	let poseSlices = $derived.by(() => {
+		let offset = 0;
+		return POSE_FIELDS.map(f => {
+			const dash = poseSum ? ((Number(fieldValue(f.key)) || 0) / poseSum) * 100 : 0;
+			const slice = { key: f.key, stroke: f.stroke, dash, offset };
+			offset += dash;
+			return slice;
+		});
+	});
+	// Temps de pose retenu
+	let keptDuration = $derived(((Number(fieldValue('imgGood')) || 0) * (Number(fieldValue('subExposure')) || 0)) / 60);
 
-	function total(row: ObservationTarget) {
-		return (Number(row.imgGood) || 0) + (Number(row.imgPass) || 0) + (Number(row.imgBad) || 0);
-	}
+	// Reprise de l'ancien format : les cibles avaient des comptes différents (signalé tant que ce n'est pas réglé)
+	let poseConflict = $derived<any[]>(obs?.poseConflict ?? []);
+	let conflictKey = $derived(`poses-merge:${obs?.id}`);
+	let showConflict = $derived(poseConflict.length > 0 && !appState.dismissedChecks.includes(conflictKey));
 
 	// --- PRÉ-REMPLISSAGE DEPUIS UN FITS ---
 	// Dossier du dernier FITS choisi : la fenêtre de choix s'y rouvre (préférence de ce poste seulement)
@@ -201,7 +216,7 @@
 		if (fits.preview && !form.images.some((i: any) => i.path.toLowerCase() === fits.preview.toLowerCase())) {
 			form.images = [...form.images, {
 				path: fits.preview, kind: 'brute', software: 'Seestar', palette: '', caption: 'Empilement du Seestar',
-				isFavorite: form.images.length === 0, targetIds: []
+				isFavorite: !form.images.some((i: any) => i.isFavorite), targetIds: [], favoriteTargetIds: []
 			}];
 			filled.push('aperçu du Seestar dans les images');
 		}
@@ -284,11 +299,12 @@
 				{/if}
 				<div class="grid grid-cols-1 xl:grid-cols-12 gap-8 flex-1">
 
-					<div class="xl:col-span-8 flex flex-col gap-6">
-						<div class="grid grid-cols-1 md:grid-cols-2 gap-6 shrink-0">
+					<div class="xl:col-span-8 flex flex-col gap-6 @container">
+						<!-- Trois cadres côte à côte quand la place le permet ; sinon la session en haut, matériel et poses dessous -->
+						<div class="grid grid-cols-1 @xl:grid-cols-2 @5xl:grid-cols-[minmax(25.5rem,1.3fr)_minmax(0,0.9fr)_minmax(0,1.1fr)] gap-4 shrink-0">
 
 							<!-- SESSION -->
-							<div class="space-y-4 bg-[#1e1e21] p-4 rounded-lg border border-[#333]">
+							<div class="space-y-4 bg-[#1e1e21] p-4 rounded-lg border border-[#333] @xl:col-span-2 @5xl:col-span-1">
 								<span class="text-[10px] uppercase font-bold text-surface-400 block border-b border-[#333] pb-1.5">1. Session</span>
 								<!-- Lieu et Début calés à gauche, Bortle et Fin calés à droite -->
 								<div class="flex justify-between gap-3">
@@ -366,7 +382,7 @@
 							<!-- MATÉRIEL & POSE -->
 							<div class="bg-[#1e1e21] p-4 rounded-lg border border-[#333]">
 								<span class="text-[10px] uppercase font-bold text-surface-400 block border-b border-[#333] pb-1.5 mb-4">2. Matériel</span>
-								<div class="grid grid-cols-2 gap-x-3 gap-y-4">
+								<div class="grid grid-cols-2 @5xl:grid-cols-1 gap-x-3 gap-y-3">
 									{#each [
 										{ key: 'instrument', label: 'Instrument (facultatif)' },
 										{ key: 'sensor', label: 'Capteur' },
@@ -384,40 +400,81 @@
 									{/each}
 								</div>
 							</div>
+
+							<!-- POSES : tout l'empilement est trié une fois pour le champ, commun à ses cibles -->
+							<div class="bg-[#1e1e21] p-4 rounded-lg border border-[#333]">
+								<span class="text-[10px] uppercase font-bold text-surface-400 block border-b border-[#333] pb-1.5 mb-4">3. Poses</span>
+								<div class="grid grid-cols-2 gap-x-3 gap-y-4">
+									<div>
+										<label for="obs-imgTotal" class="block text-[10px] text-surface-400 mb-1">Total des poses</label>
+										{#if appState.isEditingObservation}
+											<input id="obs-imgTotal" type="number" min="0" class="form-input" value={fieldValue('imgTotal')} oninput={(e) => setField('imgTotal')(Number(e.currentTarget.value))} />
+										{:else}
+											<span id="obs-imgTotal" class="block text-sm text-white">{fieldValue('imgTotal') ?? 0}</span>
+										{/if}
+									</div>
+									<div>
+										<label for="obs-subExposure" class="block text-[10px] text-surface-400 mb-1">Pose indiv. (s)</label>
+										{#if appState.isEditingObservation}
+											<input id="obs-subExposure" type="text" class="form-input" value={fieldValue('subExposure')} oninput={(e) => setField('subExposure')(e.currentTarget.value)} />
+										{:else}
+											<span id="obs-subExposure" class="block text-sm text-white">{fieldValue('subExposure') || '—'}</span>
+										{/if}
+									</div>
+								</div>
+								<div class="grid grid-cols-3 gap-2 mt-4">
+									{#each POSE_FIELDS as f (f.key)}
+										<div>
+											<label for="obs-{f.key}" class="block text-[10px] mb-1 {f.color}">{f.label}</label>
+											{#if appState.isEditingObservation}
+												<input id="obs-{f.key}" type="number" min="0" class="form-input px-1 no-spin" value={fieldValue(f.key)} oninput={(e) => setField(f.key)(Number(e.currentTarget.value))} />
+											{:else}
+												<span id="obs-{f.key}" class="block text-sm font-bold {f.color}">{fieldValue(f.key) ?? 0}</span>
+											{/if}
+										</div>
+									{/each}
+								</div>
+								<div class="border-t border-[#333] pt-3 mt-4 flex items-center gap-4">
+									<!-- Anneau : un cercle de rayon 15.9155 mesure 100 de tour, les parts s'y posent en % -->
+									<div class="w-20 h-20 shrink-0 relative" title="Part des poses bonnes">
+										<svg viewBox="0 0 44 44" class="w-full h-full -rotate-90">
+											<circle cx="22" cy="22" r="15.9155" fill="transparent" class="stroke-[#2a2a2e]" stroke-width="10" />
+											{#each poseSlices as slice (slice.key)}
+												<circle cx="22" cy="22" r="15.9155" fill="transparent" class="ring-slice {slice.stroke}" stroke-width="10"
+													stroke-dasharray="{slice.dash} 100" stroke-dashoffset={-slice.offset} />
+											{/each}
+										</svg>
+										<span class="absolute inset-0 flex items-center justify-center text-[11px] font-bold {poseSum ? 'text-green-400' : 'text-surface-500'}">
+											{poseSum ? `${Math.round(((Number(fieldValue('imgGood')) || 0) / poseSum) * 100)} %` : '?'}
+										</span>
+									</div>
+									<div class="grid grid-cols-[auto_auto] justify-start items-baseline gap-x-3 gap-y-1 min-w-0">
+										<span class="text-[10px] text-surface-400 whitespace-nowrap">Durée totale</span>
+										<span class="text-sm font-black text-white whitespace-nowrap text-right">{totalDuration.toFixed(1)} min</span>
+										<span class="text-[10px] text-surface-400 whitespace-nowrap" title="Poses bonnes × pose individuelle">Durée retenue</span>
+										<span class="text-sm font-black text-green-400 whitespace-nowrap text-right">{keptDuration ? `${keptDuration.toFixed(1)} min` : '—'}</span>
+									</div>
+								</div>
+							</div>
 						</div>
+
+						{#if showConflict}
+							<div class="-mt-2 px-3 py-2 rounded border border-amber-500/40 bg-amber-500/10 text-xs text-amber-200 flex items-start gap-3">
+								<p class="flex-1">
+									Avant la reprise, chaque cible avait ses propres comptes (bon / pass / bad) :
+									{poseConflict.map(c => `${appState.targetName(c.targetId)} ${c.imgGood} / ${c.imgPass} / ${c.imgBad}`).join(' ; ')}.
+									Ceux de la première cible ont été gardés : corrigez-les si besoin.
+								</p>
+								<button type="button" onclick={() => appState.setCheckDismissed(conflictKey, true)} class="btn-secondary text-[10px] shrink-0">C'est réglé</button>
+							</div>
+						{/if}
 
 						<!-- CIBLES DU CHAMP -->
 						<div class="bg-[#1e1e21] p-4 rounded-lg border border-[#333] shrink-0">
-							<div class="flex items-end justify-between gap-4 border-b border-[#333] pb-1.5 mb-2">
-								<span class="text-[10px] uppercase font-bold text-surface-400 whitespace-nowrap">Cibles du champ</span>
-								<!-- Total des poses × pose individuelle = durée totale d'acquisition -->
-								<div class="flex items-center gap-2 text-[10px] text-surface-400 whitespace-nowrap">
-									<label for="obs-imgTotal">Total des poses</label>
-									{#if appState.isEditingObservation}
-										<input id="obs-imgTotal" type="number" min="0" class="form-input py-0.5" style="width: 5rem" value={fieldValue('imgTotal')} oninput={(e) => setField('imgTotal')(Number(e.currentTarget.value))} />
-									{:else}
-										<span id="obs-imgTotal" class="text-sm font-bold text-white">{fieldValue('imgTotal') ?? 0}</span>
-									{/if}
-									<span class="text-sm text-surface-500">×</span>
-									<label for="obs-subExposure">Pose indiv.</label>
-									{#if appState.isEditingObservation}
-										<input id="obs-subExposure" type="text" class="form-input py-0.5" style="width: 3.5rem" value={fieldValue('subExposure')} oninput={(e) => setField('subExposure')(e.currentTarget.value)} />
-									{:else}
-										<span id="obs-subExposure" class="text-sm font-bold text-white">{fieldValue('subExposure') || '—'}</span>
-									{/if}
-									<span>s</span>
-									<span class="text-sm text-surface-500">=</span>
-									<span>Durée totale</span>
-									<span class="text-sm font-black text-white">{totalDuration.toFixed(1)} min</span>
-								</div>
-							</div>
-							<div class="grid grid-cols-[minmax(0,1.6fr)_minmax(0,0.7fr)_repeat(3,minmax(0,0.55fr))_minmax(0,0.6fr)_auto] gap-x-2 gap-y-1 items-center">
+							<span class="text-[10px] uppercase font-bold text-surface-400 block border-b border-[#333] pb-1.5 mb-2">Cibles du champ</span>
+							<div class="grid grid-cols-[minmax(0,1.6fr)_minmax(0,0.7fr)_auto] gap-x-2 gap-y-1 items-center">
 								<span class="text-[10px] text-surface-400">Cible</span>
 								<span class="text-[10px] text-surface-400">Hauteur (°)</span>
-								<span class="text-[10px] text-green-400">Bon</span>
-								<span class="text-[10px] text-yellow-500">Pass</span>
-								<span class="text-[10px] text-red-500">Bad</span>
-								<span class="text-[10px] text-surface-400" title="Poses retenues × pose individuelle">Durée retenue</span>
 								<span class="text-[10px] text-surface-400">{appState.isEditingObservation ? '' : 'Images'}</span>
 
 								{#each rows as row, i (i)}
@@ -455,18 +512,14 @@
 												>auto</button>
 											{/if}
 										</div>
-										<input type="number" min="0" class="form-input px-1" bind:value={row.imgGood} />
-										<input type="number" min="0" class="form-input px-1" bind:value={row.imgPass} />
-										<input type="number" min="0" class="form-input px-1" bind:value={row.imgBad} />
-										<span class="text-sm text-surface-300">{duration(row)}</span>
 										<button type="button" title="Retirer cette cible" onclick={() => removeTarget(i)} class="text-red-400 hover:text-red-300 px-1">✕</button>
 										<!-- Rappel de la cible sur sa propre ligne : la ligne des champs reste alignée -->
 										{#if target}
-											<span class="col-span-7 -mt-0.5 text-[10px] text-surface-500 truncate">{targetSummary(target)}</span>
+											<span class="col-span-3 -mt-0.5 text-[10px] text-surface-500 truncate">{targetSummary(target)}</span>
 										{/if}
 										<input
 											type="text"
-											class="form-input col-span-6 mb-2"
+											class="form-input col-span-2 mb-2"
 											placeholder="Note pour cette cible (facultatif)"
 											bind:value={row.notes}
 										/>
@@ -492,21 +545,6 @@
 												<span class="block text-[10px] text-surface-500" title="Calculée : au milieu du créneau · au plus haut">calc. {calc.middle}° · max {calc.max}°</span>
 											{/if}
 										</div>
-										<div class="col-span-3">
-											<span class="text-sm">
-												<span class="text-green-400">{row.imgGood}</span> /
-												<span class="text-yellow-500">{row.imgPass}</span> /
-												<span class="text-red-500">{row.imgBad}</span>
-											</span>
-											{#if total(row) > 0}
-												<div class="flex gap-0.5 mt-1 h-1.5 rounded-full overflow-hidden">
-													<div class="bg-green-400" style="flex: {row.imgGood || 0}"></div>
-													<div class="bg-yellow-500" style="flex: {row.imgPass || 0}"></div>
-													<div class="bg-red-500" style="flex: {row.imgBad || 0}"></div>
-												</div>
-											{/if}
-										</div>
-										<span class="text-sm text-white">{duration(row)}</span>
 										<button
 											type="button"
 											title="Afficher les images de cette cible"
@@ -514,7 +552,7 @@
 											class="text-xs px-2 py-0.5 rounded-full border transition-colors {filterTargetId === row.targetId ? 'bg-indigo-500 border-indigo-500 text-white font-bold' : 'border-[#333] text-surface-300 hover:border-indigo-500'}"
 										>🖼 {imageCount(row.targetId)}</button>
 										{#if row.notes}
-											<p class="col-span-7 text-xs text-surface-300 whitespace-pre-wrap -mt-0.5 mb-1.5">Note : {row.notes}</p>
+											<p class="col-span-3 text-xs text-surface-300 whitespace-pre-wrap -mt-0.5 mb-1.5">Note : {row.notes}</p>
 										{/if}
 									{/if}
 								{/each}
@@ -563,6 +601,20 @@
 	.create-option {
 		color: #818cf8;
 		font-weight: 700;
+	}
+	/* Bon / pass / bad : sans flèches, le nombre garde toute la largeur du champ */
+	.no-spin {
+		-moz-appearance: textfield;
+		appearance: textfield;
+	}
+	.no-spin::-webkit-inner-spin-button,
+	.no-spin::-webkit-outer-spin-button {
+		-webkit-appearance: none;
+		margin: 0;
+	}
+	/* L'anneau suit la saisie : chaque part glisse vers sa nouvelle taille */
+	.ring-slice {
+		transition: stroke-dasharray 0.6s cubic-bezier(0.4, 0, 0.2, 1), stroke-dashoffset 0.6s cubic-bezier(0.4, 0, 0.2, 1);
 	}
 	.session-date {
 		width: 11.5rem;

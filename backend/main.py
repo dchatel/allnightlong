@@ -115,14 +115,19 @@ class TargetSchema(BaseModel):
     imageRef: str = ""
     notes: str = ""
 
-# Une cible vue dans une observation : la hauteur et les poses retenues lui sont propres
+# Une cible vue dans une observation : la hauteur et les notes lui sont propres
+# (les poses sont celles du champ, communes à toutes ses cibles)
 class ObservationTargetSchema(BaseModel):
     targetId: int
     altitude: str = ""
+    notes: str = ""
+
+# Comptes de poses d'une cible avant la v9, quand les cibles d'une même observation différaient
+class PoseConflictSchema(BaseModel):
+    targetId: int
     imgGood: int = 0
     imgPass: int = 0
     imgBad: int = 0
-    notes: str = ""
 
 class ObservationSchema(BaseModel):
     id: Optional[int] = None
@@ -140,7 +145,12 @@ class ObservationSchema(BaseModel):
     sensorTemp: str = ""
     subExposure: str = ""
     imgTotal: int = 0
+    imgGood: int = 0
+    imgPass: int = 0
+    imgBad: int = 0
     notes: str = ""
+    # Lecture seule : comptes par cible repris de l'ancien format, quand ils différaient
+    poseConflict: List[PoseConflictSchema] = []
     # Lieu saisi en texte libre avant les lieux enregistrés, conservé jusqu'à sa conversion
     legacyLocation: str = ""
     targets: List[ObservationTargetSchema] = []
@@ -155,9 +165,12 @@ class ObservationImageSchema(BaseModel):
     software: str = ""
     palette: str = ""
     caption: str = ""
+    # Favorite du champ entier (vignette de l'observation) ; seulement pour une image sans cible
     isFavorite: bool = False
     # Cibles visibles sur l'image ; aucune = champ entier
     targetIds: List[int] = []
+    # Cibles dont c'est l'image favorite (une favorite par cible), parmi targetIds
+    favoriteTargetIds: List[int] = []
     # Calculé à la lecture : le fichier n'existe pas (disque débranché, dossier déplacé…)
     missing: bool = False
 
@@ -326,7 +339,7 @@ def guess_image_details(path: str):
 
 
 # ================= INITIALISATION & MIGRATIONS =================
-LATEST_SCHEMA_VERSION = 8
+LATEST_SCHEMA_VERSION = 9
 
 def migrate_to_v4(conn):
     # Reconstruction de la table observations : SQLite ne sait pas retirer une clé étrangère.
@@ -455,6 +468,46 @@ def migrate_to_v5(conn):
     cursor.execute("ALTER TABLE observations DROP COLUMN image_raw")
     cursor.execute("ALTER TABLE observations DROP COLUMN image_processed")
     cursor.execute("UPDATE schema_version SET version = 5")
+
+
+def migrate_to_v9(conn):
+    """Poses au niveau du champ, favorite du champ et favorite de chaque cible."""
+    cursor = conn.cursor()
+    cursor.execute("ALTER TABLE observations ADD COLUMN img_good INTEGER DEFAULT 0")
+    cursor.execute("ALTER TABLE observations ADD COLUMN img_pass INTEGER DEFAULT 0")
+    cursor.execute("ALTER TABLE observations ADD COLUMN img_bad INTEGER DEFAULT 0")
+    cursor.execute("ALTER TABLE observations ADD COLUMN pose_conflict TEXT")
+    cursor.execute("ALTER TABLE observations ADD COLUMN favorite_image_id INTEGER REFERENCES observation_images (id) ON DELETE SET NULL")
+    cursor.execute("ALTER TABLE observation_targets ADD COLUMN favorite_image_id INTEGER REFERENCES observation_images (id) ON DELETE SET NULL")
+
+    # Les poses de la première cible deviennent celles du champ ; des comptes différents sont gardés
+    # à part pour être signalés dans « Données à vérifier »
+    rows = cursor.execute(
+        "SELECT observation_id, target_id, img_good, img_pass, img_bad FROM observation_targets ORDER BY observation_id, rowid"
+    ).fetchall()
+    by_obs = {}
+    for obs_id, target_id, good, passed, bad in rows:
+        by_obs.setdefault(obs_id, []).append({"targetId": target_id, "imgGood": good or 0, "imgPass": passed or 0, "imgBad": bad or 0})
+    for obs_id, counts in by_obs.items():
+        first = counts[0]
+        differ = any((c["imgGood"], c["imgPass"], c["imgBad"]) != (first["imgGood"], first["imgPass"], first["imgBad"]) for c in counts)
+        cursor.execute("UPDATE observations SET img_good=?, img_pass=?, img_bad=?, pose_conflict=? WHERE id=?",
+                       (first["imgGood"], first["imgPass"], first["imgBad"], json.dumps(counts) if differ else None, obs_id))
+
+    # L'ancienne favorite : celle du champ si elle n'a pas de cible, sinon celle de chacune de ses cibles
+    for image_id, obs_id in cursor.execute("SELECT id, observation_id FROM observation_images WHERE is_favorite = 1").fetchall():
+        targets = [t for (t,) in cursor.execute("SELECT target_id FROM image_targets WHERE image_id = ?", (image_id,))]
+        if not targets:
+            cursor.execute("UPDATE observations SET favorite_image_id = ? WHERE id = ?", (image_id, obs_id))
+        for target_id in targets:
+            cursor.execute("UPDATE observation_targets SET favorite_image_id = ? WHERE observation_id = ? AND target_id = ?",
+                           (image_id, obs_id, target_id))
+
+    cursor.execute("ALTER TABLE observation_targets DROP COLUMN img_good")
+    cursor.execute("ALTER TABLE observation_targets DROP COLUMN img_pass")
+    cursor.execute("ALTER TABLE observation_targets DROP COLUMN img_bad")
+    cursor.execute("ALTER TABLE observation_images DROP COLUMN is_favorite")
+    cursor.execute("UPDATE schema_version SET version = 9")
 
 
 def init_db():
@@ -620,6 +673,12 @@ def init_db():
         cursor.execute("UPDATE schema_version SET version = 8")
         current_version = 8
         print("Migration vers DB v8 (horizon du lieu) effectuée.")
+
+    # --- VERSION 9: Poses du champ et favorites par cible ---
+    if current_version < 9:
+        migrate_to_v9(conn)
+        current_version = 9
+        print("Migration vers DB v9 (poses du champ, favorites par cible) effectuée.")
     conn.commit()
     conn.close()
 
@@ -703,7 +762,8 @@ def delete_target(target_id: int):
 
 OBSERVATION_COLUMNS = """
     o.id, o.start_utc, o.end_utc, s.location_id, s.bortle, o.session_id, s.night_date, o.instrument, o.sensor,
-    o.filter, o.sensor_temp, o.sub_exposure, o.img_total, o.notes, o.legacy_location
+    o.filter, o.sensor_temp, o.sub_exposure, o.img_total, o.notes, o.legacy_location,
+    o.img_good, o.img_pass, o.img_bad, o.pose_conflict, o.favorite_image_id
 """
 
 def observation_from_row(r, targets, images) -> ObservationSchema:
@@ -711,6 +771,7 @@ def observation_from_row(r, targets, images) -> ObservationSchema:
         id=r[0], start=r[1], end=r[2] or "", locationId=r[3], bortle=r[4], sessionId=r[5], nightDate=r[6] or "",
         instrument=r[7] or "", sensor=r[8] or "", filter=r[9] or "", sensorTemp=r[10] or "", subExposure=r[11] or "",
         imgTotal=r[12] or 0, notes=r[13] or "", legacyLocation=r[14] or "", targets=targets, images=images,
+        imgGood=r[15] or 0, imgPass=r[16] or 0, imgBad=r[17] or 0, poseConflict=json.loads(r[18]) if r[18] else [],
     )
 
 def read_observations(conn, observation_id: Optional[int] = None) -> List[ObservationSchema]:
@@ -718,12 +779,22 @@ def read_observations(conn, observation_id: Optional[int] = None) -> List[Observ
     params = (observation_id,) if observation_id is not None else ()
     rows = conn.execute(f"SELECT {OBSERVATION_COLUMNS} FROM observations o LEFT JOIN sessions s ON s.id = o.session_id {where}", params).fetchall()
     targets = {}
-    for t in conn.execute("SELECT observation_id, target_id, altitude, img_good, img_pass, img_bad, notes FROM observation_targets ORDER BY rowid"):
-        targets.setdefault(t[0], []).append(ObservationTargetSchema(
-            targetId=t[1], altitude=t[2] or "", imgGood=t[3] or 0, imgPass=t[4] or 0, imgBad=t[5] or 0, notes=t[6] or "",
-        ))
+    # Image favorite → cibles dont elle est la favorite
+    favorite_of = {}
+    for t in conn.execute("SELECT observation_id, target_id, altitude, notes, favorite_image_id FROM observation_targets ORDER BY rowid"):
+        targets.setdefault(t[0], []).append(ObservationTargetSchema(targetId=t[1], altitude=t[2] or "", notes=t[3] or ""))
+        if t[4] is not None:
+            favorite_of.setdefault(t[4], []).append(t[1])
     images = read_images(conn)
-    return [observation_from_row(r, targets.get(r[0], []), images.get(r[0], [])) for r in rows]
+    for image in (i for obs_images in images.values() for i in obs_images):
+        image.favoriteTargetIds = [t for t in favorite_of.get(image.id, []) if t in image.targetIds]
+    observations = []
+    for r in rows:
+        obs_images = images.get(r[0], [])
+        for image in obs_images:
+            image.isFavorite = image.id == r[19] and not image.targetIds
+        observations.append(observation_from_row(r, targets.get(r[0], []), obs_images))
+    return observations
 
 def read_images(conn):
     folder = images_folder(conn)
@@ -732,13 +803,13 @@ def read_images(conn):
         image_targets.setdefault(image_id, []).append(target_id)
     images = {}
     for i in conn.execute("""
-        SELECT id, observation_id, path, kind, software, palette, caption, is_favorite
+        SELECT id, observation_id, path, kind, software, palette, caption
         FROM observation_images ORDER BY observation_id, position, id
     """):
         full = to_full_path(i[2], folder)
         images.setdefault(i[1], []).append(ObservationImageSchema(
             id=i[0], path=full, kind=i[3] or "", software=i[4] or "", palette=i[5] or "", caption=i[6] or "",
-            isFavorite=bool(i[7]), targetIds=image_targets.get(i[0], []), missing=file_missing(full),
+            targetIds=image_targets.get(i[0], []), missing=file_missing(full),
         ))
     return images
 
@@ -749,22 +820,29 @@ def save_images(cursor, observation_id: int, images: List[ObservationImageSchema
         f"DELETE FROM observation_images WHERE observation_id = ? AND id NOT IN ({','.join('?' * len(kept)) or 'NULL'})",
         (observation_id, *kept),
     )
-    # Une seule image favorite : la première cochée, sinon la première de la liste
-    favorite = next((n for n, i in enumerate(images) if i.isFavorite), 0)
     for position, image in enumerate(images):
-        values = (to_stored_path(image.path, folder), image.kind, image.software, image.palette, image.caption,
-                  int(position == favorite), position)
-        cursor.execute("UPDATE observation_images SET path=?, kind=?, software=?, palette=?, caption=?, is_favorite=?, position=? WHERE id=? AND observation_id=?",
+        values = (to_stored_path(image.path, folder), image.kind, image.software, image.palette, image.caption, position)
+        cursor.execute("UPDATE observation_images SET path=?, kind=?, software=?, palette=?, caption=?, position=? WHERE id=? AND observation_id=?",
                        (*values, image.id, observation_id))
         if not image.id or cursor.rowcount == 0:
             cursor.execute("""
-                INSERT INTO observation_images (path, kind, software, palette, caption, is_favorite, position, observation_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO observation_images (path, kind, software, palette, caption, position, observation_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (*values, observation_id))
             image.id = cursor.lastrowid
         cursor.execute("DELETE FROM image_targets WHERE image_id = ?", (image.id,))
         for target_id in dict.fromkeys(image.targetIds):
             cursor.execute("INSERT INTO image_targets (image_id, target_id) VALUES (?, ?)", (image.id, target_id))
+
+    # Une favorite pour le champ (image sans cible) et une par cible (image qui la montre) :
+    # la première image de la liste qui la réclame
+    field = next((i.id for i in images if i.isFavorite and not i.targetIds), None)
+    cursor.execute("UPDATE observations SET favorite_image_id = ? WHERE id = ?", (field, observation_id))
+    cursor.execute("UPDATE observation_targets SET favorite_image_id = NULL WHERE observation_id = ?", (observation_id,))
+    for image in reversed(images):
+        for target_id in set(image.favoriteTargetIds) & set(image.targetIds):
+            cursor.execute("UPDATE observation_targets SET favorite_image_id = ? WHERE observation_id = ? AND target_id = ?",
+                           (image.id, observation_id, target_id))
 
 @app.get("/api/observations", response_model=List[ObservationSchema])
 def get_observations():
@@ -797,11 +875,11 @@ def save_observation(obs: ObservationSchema):
     try:
         session_id = find_or_create_session(cursor, night_of(obs.start), obs.locationId, obs.bortle)
         values = (session_id, obs.start, obs.end, obs.instrument, obs.sensor, obs.filter, obs.sensorTemp, obs.subExposure,
-                  obs.imgTotal, obs.notes)
+                  obs.imgTotal, obs.imgGood, obs.imgPass, obs.imgBad, obs.notes)
         if obs.id:
             cursor.execute("""
                 UPDATE observations SET session_id=?, start_utc=?, end_utc=?, instrument=?, sensor=?, filter=?, sensor_temp=?,
-                       sub_exposure=?, img_total=?, notes=?
+                       sub_exposure=?, img_total=?, img_good=?, img_pass=?, img_bad=?, notes=?
                 WHERE id=?
             """, (*values, obs.id))
             if cursor.rowcount == 0:
@@ -813,15 +891,15 @@ def save_observation(obs: ObservationSchema):
         else:
             cursor.execute("""
                 INSERT INTO observations (session_id, start_utc, end_utc, instrument, sensor, filter, sensor_temp,
-                                          sub_exposure, img_total, notes)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                          sub_exposure, img_total, img_good, img_pass, img_bad, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, values)
             obs.id = cursor.lastrowid
         for t in obs.targets:
             cursor.execute("""
-                INSERT INTO observation_targets (observation_id, target_id, altitude, img_good, img_pass, img_bad, notes)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (obs.id, t.targetId, t.altitude, t.imgGood, t.imgPass, t.imgBad, t.notes))
+                INSERT INTO observation_targets (observation_id, target_id, altitude, notes)
+                VALUES (?, ?, ?, ?)
+            """, (obs.id, t.targetId, t.altitude, t.notes))
         # Une image ne peut montrer qu'une cible de l'observation
         for image in obs.images:
             image.targetIds = [t for t in image.targetIds if t in target_ids]

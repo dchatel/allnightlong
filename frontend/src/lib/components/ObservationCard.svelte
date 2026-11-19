@@ -1,17 +1,13 @@
 <script lang="ts">
-	import { appState, formatDate, favoriteImage, imageSrc, IMAGE_KINDS, type ObservationTarget } from '$lib/state.svelte';
+	import { appState, formatDate, favoriteImage, imageSrc, IMAGE_KINDS } from '$lib/state.svelte';
 
-	// targetId : cible dont on montre les poses (fiche cible) ; sinon la première de l'observation
+	// targetId : carte vue depuis cette cible (sa fiche) ; sa favorite sert de vignette
 	let { obs, targetId = null }: { obs: any; targetId?: number | null } = $props();
 
-	// Vignette : l'image favorite de l'observation
-	let image = $derived(favoriteImage(obs));
+	let image = $derived(favoriteImage(obs, targetId));
 	let img = $derived(image && !image.missing ? imageSrc(image.path) : '');
 	let kind = $derived(image ? (IMAGE_KINDS[image.kind] ?? image.kind) : null);
 	let imageCount = $derived(obs.images?.length ?? 0);
-	let row = $derived<ObservationTarget | undefined>(
-		obs.targets.find((t: ObservationTarget) => t.targetId === targetId) ?? obs.targets[0]
-	);
 	// Une seule cible : son nom usuel aide à la reconnaître (« IC 1848 · Nébuleuse de l'Âme »)
 	let names = $derived.by(() => {
 		if (obs.targets.length !== 1) return appState.observationTargetNames(obs);
@@ -22,7 +18,7 @@
 </script>
 
 <button
-	onclick={() => appState.openObservation(obs.id)}
+	onclick={() => appState.openObservation(obs.id, targetId)}
 	class="relative aspect-square rounded-lg overflow-hidden border border-[#333] bg-[#1e1e21] group text-left"
 >
 	{#if img}
@@ -46,11 +42,11 @@
 			<span class="text-[11px] font-bold text-indigo-300 block truncate">{names}</span>
 		{/if}
 		<span class="text-[10px] text-surface-300 block truncate">{details || '—'}</span>
-		{#if row && (row.imgGood || row.imgPass || row.imgBad)}
+		{#if obs.imgGood || obs.imgPass || obs.imgBad}
 			<div class="flex gap-1 mt-1.5 h-1 rounded-full overflow-hidden w-24">
-				<div class="bg-green-400" style="flex: {row.imgGood || 0}"></div>
-				<div class="bg-yellow-500" style="flex: {row.imgPass || 0}"></div>
-				<div class="bg-red-500" style="flex: {row.imgBad || 0}"></div>
+				<div class="bg-green-400" style="flex: {obs.imgGood || 0}"></div>
+				<div class="bg-yellow-500" style="flex: {obs.imgPass || 0}"></div>
+				<div class="bg-red-500" style="flex: {obs.imgBad || 0}"></div>
 			</div>
 		{/if}
 	</div>

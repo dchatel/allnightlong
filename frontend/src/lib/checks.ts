@@ -14,6 +14,7 @@ export interface Check {
 export const RULES: Record<string, string> = {
 	overlap: 'Observations qui se chevauchent',
 	poses: 'Compteurs de poses incohérents',
+	posesMerge: 'Poses différentes selon les cibles (reprise)',
 	weather: 'Même relevé météo sur deux nuits',
 	moon: 'Phase de Lune notée différente du calcul',
 	altitude: 'Hauteur saisie différente du calcul',
@@ -68,14 +69,21 @@ export function runChecks({ observations, targets, locations, weather }: Inputs)
 			checks.push({ key: `images:${obs.id}`, rule: 'images', title: label(obs), detail: 'Aucune image rattachée à ce rapport.', observationIds: [obs.id] });
 		}
 
-		// --- Poses : bon + pass = total (convention récente) ou bon + pass + bad = total (premières fiches)
-		for (const row of obs.targets as ObservationTarget[]) {
-			const { imgGood: g, imgPass: p, imgBad: b } = row;
-			if (!obs.imgTotal || !(g || p || b)) continue;
-			if (g + p === obs.imgTotal || g + p + b === obs.imgTotal) continue;
+		// --- Poses du champ : bon + pass = total (convention récente) ou bon + pass + bad = total (premières fiches)
+		const { imgGood: g = 0, imgPass: p = 0, imgBad: b = 0 } = obs;
+		if (obs.imgTotal && (g || p || b) && g + p !== obs.imgTotal && g + p + b !== obs.imgTotal) {
 			checks.push({
-				key: `poses:${obs.id}:${row.targetId}`, rule: 'poses', title: label(obs),
-				detail: `${targetById.get(row.targetId)?.name ?? 'Cible'} : bon ${g} + pass ${p} = ${g + p}, avec bad ${b} : ${g + p + b} ; total des poses ${obs.imgTotal}.`,
+				key: `poses:${obs.id}`, rule: 'poses', title: label(obs),
+				detail: `Bon ${g} + pass ${p} = ${g + p}, avec bad ${b} : ${g + p + b} ; total des poses ${obs.imgTotal}.`,
+				observationIds: [obs.id]
+			});
+		}
+		// Reprise de l'ancien format : chaque cible avait ses comptes, ceux de la première ont été gardés
+		if ((obs.poseConflict ?? []).length) {
+			const counts = obs.poseConflict.map((c: any) => `${targetById.get(c.targetId)?.name ?? '?'} ${c.imgGood} / ${c.imgPass} / ${c.imgBad}`);
+			checks.push({
+				key: `poses-merge:${obs.id}`, rule: 'posesMerge', title: label(obs),
+				detail: `Comptes bon / pass / bad différents selon les cibles avant la reprise : ${counts.join(' ; ')}. Ceux de la première cible sont gardés pour tout le champ.`,
 				observationIds: [obs.id]
 			});
 		}

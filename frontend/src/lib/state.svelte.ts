@@ -96,12 +96,10 @@ interface TargetSheet {
 	onSaved?: (target: any) => void;
 }
 
+// Les poses (bon / pass / bad) sont celles du champ, dans l'observation : communes à ses cibles
 export interface ObservationTarget {
 	targetId: number | null;
 	altitude: string;
-	imgGood: number;
-	imgPass: number;
-	imgBad: number;
 	notes: string;
 }
 
@@ -112,9 +110,12 @@ export interface ObservationImage {
 	software: string;
 	palette: string;
 	caption: string;
+	// Favorite du champ entier (image sans cible)
 	isFavorite: boolean;
 	// Cibles visibles sur l'image ; aucune = champ entier
 	targetIds: number[];
+	// Cibles dont c'est la favorite (une favorite par cible)
+	favoriteTargetIds: number[];
 	missing?: boolean;
 }
 
@@ -130,10 +131,23 @@ export function imageTitle(image: ObservationImage) {
 	return [image.software, image.palette].filter(Boolean).join(' · ') || IMAGE_KINDS[image.kind] || image.kind || 'Image';
 }
 
-// Vignette d'une observation : l'image favorite, sinon la première
-export function favoriteImage(obs: any): ObservationImage | null {
+// Vignette d'une observation.
+// Vue depuis une cible : sa favorite, sinon sa première image, sinon la favorite du champ.
+// Sinon : la favorite du champ, sinon celle de la première cible qui en a une, sinon la première image
+// (une carte du ciel en dernier recours).
+export function favoriteImage(obs: any, targetId: number | null = null): ObservationImage | null {
 	const images: ObservationImage[] = obs?.images ?? [];
-	return images.find(i => i.isFavorite) ?? images[0] ?? null;
+	const field = images.find(i => i.isFavorite);
+	if (targetId != null) {
+		const own = images.find(i => i.favoriteTargetIds?.includes(targetId)) ?? images.find(i => i.targetIds.includes(targetId));
+		if (own) return own;
+	}
+	if (field) return field;
+	for (const row of obs?.targets ?? []) {
+		const favorite = images.find(i => i.favoriteTargetIds?.includes(row.targetId));
+		if (favorite) return favorite;
+	}
+	return images.find(i => i.kind !== 'carte') ?? images[0] ?? null;
 }
 
 // Chemin local → adresse lisible par la fenêtre de l'application
@@ -180,7 +194,7 @@ export interface FitsSummary {
 }
 
 export function emptyObservationTarget(targetId: number | null = null): ObservationTarget {
-	return { targetId, altitude: '', imgGood: 0, imgPass: 0, imgBad: 0, notes: '' };
+	return { targetId, altitude: '', notes: '' };
 }
 
 const MONTHS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
@@ -245,6 +259,7 @@ class AppState {
 	selectedTargetId = $state<number | null>(null);
 	isEditingTarget = $state(false); 
 	activeObservationId = $state<number | null>(null);
+	observationOpenedFromTargetId = $state<number | null>(null);
 	isEditingObservation = $state(false);
 	showMapModal = $state(false);
 	showSettings = $state(false);
@@ -827,7 +842,9 @@ class AppState {
 		return this.activeObservationId !== null;
 	}
 
-	openObservation(id: number) {
+	// fromTargetId : rapport ouvert depuis cette cible, sa galerie s'ouvre filtrée sur elle
+	openObservation(id: number, fromTargetId: number | null = null) {
+		this.observationOpenedFromTargetId = fromTargetId;
 		this.activeObservationId = id;
 		this.isEditingObservation = false;
 		this.loadWeather(this.activeObservation?.sessionId);
@@ -879,6 +896,9 @@ class AppState {
 			sensorTemp: '',
 			subExposure: '10',
 			imgTotal: 0,
+			imgGood: 0,
+			imgPass: 0,
+			imgBad: 0,
 			notes: '',
 			images: [],
 legacyLocation: '',
@@ -897,11 +917,9 @@ legacyLocation: '',
 		try {
 			const obsToSave = $state.snapshot(this.observationForm);
 			// Lignes ajoutées mais sans cible choisie : ignorées plutôt que refusées
-			obsToSave.targets = obsToSave.targets
-				.filter((t: ObservationTarget) => t.targetId)
-				// Un champ numérique vidé vaut null : compté comme 0
-				.map((t: ObservationTarget) => ({ ...t, imgGood: Number(t.imgGood) || 0, imgPass: Number(t.imgPass) || 0, imgBad: Number(t.imgBad) || 0 }));
-			obsToSave.imgTotal = Number(obsToSave.imgTotal) || 0;
+			obsToSave.targets = obsToSave.targets.filter((t: ObservationTarget) => t.targetId);
+			// Un champ numérique vidé vaut null : compté comme 0
+			for (const key of ['imgTotal', 'imgGood', 'imgPass', 'imgBad']) obsToSave[key] = Number(obsToSave[key]) || 0;
 			const wasNewObs = obsToSave.id && obsToSave.id > 1000000000;
 			const tempId = obsToSave.id;
 
