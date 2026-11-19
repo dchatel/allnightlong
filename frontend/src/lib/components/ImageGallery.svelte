@@ -126,17 +126,18 @@
 	}
 
 	// Chips de l'image : « Champ entier » (id null, exclusive) ou une cible (choix multiple).
-	// Tout changement retire à l'image ses favorites : elles sont à redonner à la main.
+	// L'image ne garde que les favorites de ce qu'elle montre encore : décocher une cible lui retire
+	// la favorite de cette cible, passer du champ entier aux cibles (ou l'inverse) celle de l'ancien choix.
 	function toggleChip(image: ObservationImage, id: number | null) {
 		const shown = shownTargets(image);
 		if (id == null) {
 			if (!shown.length) return;
 			image.targetIds = [];
 		} else {
+			if (!shown.length) image.isFavorite = false;
 			image.targetIds = shown.includes(id) ? shown.filter(t => t !== id) : [...shown, id];
 		}
-		image.isFavorite = false;
-		image.favoriteTargetIds = [];
+		image.favoriteTargetIds = (image.favoriteTargetIds ?? []).filter(t => image.targetIds.includes(t));
 	}
 
 	// Étoile d'une chip : l'image devient la favorite du champ (id null) ou de cette cible, à la place d'une autre

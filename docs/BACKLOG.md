@@ -9,7 +9,7 @@ Idées et améliorations notées pour plus tard, pas encore planifiées dans un 
 - [x] Image favorite par cible : ouvrir une observation depuis une cible montre sa favorite à elle, et la galerie du rapport s'ouvre filtrée sur cette cible.
   - Base : `observations.favorite_image_id` (champ entier, remplace `is_favorite`) et `observation_targets.favorite_image_id` (une favorite par cible), remis à vide si l'image est supprimée.
   - Éditeur d'image : les coches deviennent des chips « Champ entier », « objet A », « objet B »… ; choix multiple pour les objets, « Champ entier » exclusive. Chaque chip cochée porte une étoile = favorite de cet objet (remplace l'ancienne favorite de l'objet).
-  - Tout changement de chips sur une image lui retire toutes ses favorites.
+  - Décocher une chip retire à l'image la favorite de cet objet seulement ; passer du champ entier aux objets (ou l'inverse) retire la favorite de l'ancien choix.
   - Liste des images : plus de bouton étoile, seulement la croix ; à sa gauche, alignés à droite : objets, puis type. L'étoile se place devant chaque objet dont l'image est la favorite, en gras (ex. « M 42 + ⭐ **NGC 1977** · Traitée »).
   - Liste principale : favorite du champ ; depuis une cible : favorite de la cible, sinon sa première image, sinon celle du champ.
 
